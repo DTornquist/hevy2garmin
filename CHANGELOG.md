@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-24
+
+### Added
+- Per-routine sync on the Routines page ([#255](https://github.com/drkostas/hevy2garmin/pull/255), thanks @bcandido). Each routine now has its own Sync / Re-sync button, so you can create or re-create a single planned workout on Garmin without running a full sync. A single sync uses the same safe reconciliation as the bulk path: it only ever replaces a Garmin workout carrying hevy2garmin's provenance marker (never one you built by hand), persists the workout before scheduling so a mid-sync failure can't orphan or duplicate it, and restores the routine's existing scheduled dates.
+- Redesigned Routines page ([#255](https://github.com/drkostas/hevy2garmin/pull/255), thanks @bcandido). Routines are shown as cards with a clear on-Garmin / pending status, an expandable exercise list, and a per-routine schedule panel. A toolbar adds All / On Garmin / Pending filters (a "show only unsynced" view) and a name search, and a summary strip shows how many routines are on Garmin with a progress bar.
+
 ## [0.7.0] - 2026-07-24
 
 ### Added
