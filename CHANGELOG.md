@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-28
+
+### Added
+- "Updated on Hevy" badge on the Routines page ([#265](https://github.com/drkostas/hevy2garmin/pull/265), thanks @bcandido). A synced routine that changed on Hevy since its last sync now shows an amber "Updated on Hevy" badge and an "Update" button, and the sync bar counts how many routines have drifted. The badge compares the exact Garmin payload hash a sync would produce against the last synced hash, so it means precisely "a sync would recreate this", not just "the Hevy timestamp moved".
+- Detection of planned workouts deleted on Garmin ([#266](https://github.com/drkostas/hevy2garmin/pull/266), thanks @bcandido). If you delete a hevy2garmin-created planned workout in Garmin Connect, the Routines page now notices (reconciling tracked workouts against your Garmin library on load), shows a "Removed on Garmin" badge with a "Re-create" button, and the next sync recreates and reschedules it. The check fails safe: a listing error is never read as "everything was deleted", and it only ever acts on workouts carrying hevy2garmin's provenance marker, so a workout you built by hand in Garmin is never touched.
+
+### Fixed
+- Re-syncing a routine no longer plants past scheduled dates in Garmin's calendar history ([#264](https://github.com/drkostas/hevy2garmin/pull/264), thanks @bcandido). Restored schedule dates are now filtered to today or later, and orphaned schedule rows are pruned when every prior date is already past. An explicitly chosen date is still booked as-is.
+- The Garmin workout listing now fails safe on an unexpected non-list response body ([#269](https://github.com/drkostas/hevy2garmin/pull/269)). A transient error-as-200 previously read as an empty library, which could briefly flag every synced routine as removed on Garmin; it now degrades to the last-known state instead.
+
 ## [0.8.0] - 2026-07-24
 
 ### Added
