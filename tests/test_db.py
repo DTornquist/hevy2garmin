@@ -81,6 +81,31 @@ class TestRoutineTracking:
         assert db.is_routine_synced("r1") is False
         assert db.delete_synced_routine("r1") is False
 
+    def test_set_routine_status_only_touches_status(self, tmp_path: Path) -> None:
+        db = _make_db(tmp_path)
+        db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push",
+                               content_hash="h1")
+        db.set_routine_status("r1", "missing_on_garmin")
+        record = db.get_synced_routine("r1")
+        assert record["status"] == "missing_on_garmin"
+        assert record["garmin_workout_id"] == "w1"
+        assert record["content_hash"] == "h1"
+        # Unknown id is a silent no-op.
+        db.set_routine_status("r-unknown", "missing_on_garmin")
+        assert db.get_synced_routine("r-unknown") is None
+
+    def test_list_synced_routines(self, tmp_path: Path) -> None:
+        db = _make_db(tmp_path)
+        assert db.list_synced_routines() == []
+        db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push")
+        db.mark_routine_synced("r2", garmin_workout_id="w2", title="Pull",
+                               status="schedule_pending")
+        rows = {r["hevy_routine_id"]: r for r in db.list_synced_routines()}
+        assert set(rows) == {"r1", "r2"}
+        assert rows["r1"]["garmin_workout_id"] == "w1"
+        assert rows["r1"]["status"] == "success"
+        assert rows["r2"]["status"] == "schedule_pending"
+
     def test_routine_schedule_round_trip(self, tmp_path: Path) -> None:
         db = _make_db(tmp_path)
         db.add_routine_schedule("r1", "111", "2026-07-20")

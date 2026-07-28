@@ -139,6 +139,19 @@ class Database(ABC):
         """Return the sync record for a Hevy routine, or None if never synced."""
 
     @abstractmethod
+    def list_synced_routines(self) -> list[dict]:
+        """Return every routine sync record (same keys as :meth:`get_synced_routine`)."""
+
+    @abstractmethod
+    def set_routine_status(self, hevy_routine_id: str, status: str) -> None:
+        """Update only the status of a routine sync record.
+
+        Leaves every other field (including ``synced_at``) untouched — used by
+        reconciliation to flag ``missing_on_garmin`` / restore ``success`` without
+        clobbering the recorded hash or sync time. No-op for unknown ids.
+        """
+
+    @abstractmethod
     def is_routine_synced(self, hevy_routine_id: str, hevy_updated_at: str | None = None) -> bool:
         """True if the routine was synced and (if given) not edited on Hevy since."""
 
@@ -158,6 +171,9 @@ class Database(ABC):
         ``status="schedule_pending"`` marks a workout that was created on Garmin
         but whose calendar scheduling hasn't been confirmed yet, so the next sync
         retries it instead of skipping the routine as already done.
+        ``status="missing_on_garmin"`` (set via :meth:`set_routine_status`) marks a
+        workout that no longer exists on Garmin (deleted by the user there); any
+        non-``success`` status defeats the unchanged-hash skip, so a sync recreates it.
         """
 
     @abstractmethod

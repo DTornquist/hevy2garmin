@@ -1,9 +1,13 @@
-"""Detect (log-only) duplicate Garmin activities left by past sync races.
+"""Reconcile local sync state against Garmin's actual state.
 
-When hevy2garmin syncs a workout before its Garmin watch activity has landed, it
-uploads a fresh activity; the watch copy appears later and the user has two
-activities for one workout. This module finds those pairs and logs them. It does
-NOT delete anything — deletion is a separate, opt-in feature.
+Two concerns live here:
+
+- :func:`detect_duplicates` — detect (log-only) duplicate Garmin activities left
+  by past sync races: hevy2garmin uploaded a fresh activity before the watch copy
+  landed, leaving two activities for one workout. Nothing is deleted — deletion
+  is a separate, opt-in feature.
+- :func:`reconcile_missing_routine_workouts` — flag routine planned workouts the
+  user deleted on Garmin, so the dashboard stops showing them as synced.
 """
 from __future__ import annotations
 
@@ -63,3 +67,43 @@ def detect_duplicates(client, workouts: list[dict], limiter=None) -> list[dict]:
             logger.debug("duplicate detection skipped for a workout", exc_info=True)
             continue
     return dups
+
+
+def reconcile_missing_routine_workouts(store, garmin_workouts: list[dict] | None) -> list[str]:
+    """Flag synced routines whose Garmin planned workout no longer exists.
+
+    ``garmin_workouts`` is a full ``list_workouts()`` result; ``None`` means the
+    listing failed (auth, rate limit, network) — reconciliation is skipped entirely
+    rather than treating an error as "everything was deleted". A tracked id absent
+    from the listing flips the routine's status to ``missing_on_garmin``; an id
+    that reappears flips it back to ``success`` (self-healing a false positive from
+    a truncated listing). ``schedule_pending`` rows are never promoted to
+    ``success`` — that would cancel their schedule retry. Best-effort: never raises.
+
+    Returns the ``hevy_routine_id``s whose status changed.
+    """
+    if garmin_workouts is None:
+        return []
+    changed: list[str] = []
+    try:
+        present = {
+            str(w["workoutId"]) for w in garmin_workouts if w.get("workoutId") is not None
+        }
+        for row in store.list_synced_routines():
+            wid = row.get("garmin_workout_id")
+            if not wid:
+                continue
+            status = row.get("status") or "success"
+            if str(wid) not in present and status != "missing_on_garmin":
+                store.set_routine_status(row["hevy_routine_id"], "missing_on_garmin")
+                changed.append(row["hevy_routine_id"])
+                logger.info(
+                    "Routine %s (%s): Garmin workout %s is gone — marked missing",
+                    row["hevy_routine_id"], row.get("title") or "?", wid,
+                )
+            elif str(wid) in present and status == "missing_on_garmin":
+                store.set_routine_status(row["hevy_routine_id"], "success")
+                changed.append(row["hevy_routine_id"])
+    except Exception:
+        logger.debug("routine reconcile skipped", exc_info=True)
+    return changed
