@@ -243,3 +243,28 @@ class TestGenerateDescription:
         desc = generate_description(workout)
         assert "80.0kg" in desc
         assert "3.0km" in desc
+
+
+def test_list_workouts_raises_on_non_list_body():
+    """A 2xx response with a non-list body (an error envelope or shape drift) must
+    raise, not be read as an empty library. Reading it as ``[]`` would make routine
+    reconciliation flag every synced routine as deleted on Garmin."""
+    from hevy2garmin.garmin import list_workouts
+    client = MagicMock()
+    resp = MagicMock()
+    resp.json.return_value = {"error": "temporarily unavailable"}  # dict, not a list
+    client.client.request.return_value = resp
+    with patch("hevy2garmin.garmin.time.sleep"):
+        with pytest.raises(RuntimeError, match="not a list"):
+            list_workouts(client)
+
+
+def test_list_workouts_returns_well_formed_list():
+    """A well-formed list body passes through unchanged."""
+    from hevy2garmin.garmin import list_workouts
+    client = MagicMock()
+    resp = MagicMock()
+    resp.json.return_value = [{"workoutId": 1}, {"workoutId": 2}]
+    client.client.request.return_value = resp
+    with patch("hevy2garmin.garmin.time.sleep"):
+        assert list_workouts(client) == [{"workoutId": 1}, {"workoutId": 2}]
