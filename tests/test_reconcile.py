@@ -38,3 +38,77 @@ def test_never_raises_on_garmin_error():
     client = MagicMock()
     client.get_activities_by_date.side_effect = RuntimeError("boom")
     assert detect_duplicates(client, [WORKOUT]) == []
+
+
+# ── reconcile_missing_routine_workouts ──────────────────────────────────────
+
+
+def _routine_store(tmp_path):
+    from hevy2garmin.db_sqlite import SQLiteDatabase
+    return SQLiteDatabase(tmp_path / "reconcile.db")
+
+
+def test_marks_routine_missing_when_workout_gone(tmp_path):
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1", garmin_workout_id="555", title="Push",
+                              content_hash="h1")
+    changed = reconcile_missing_routine_workouts(store, [{"workoutId": 999}])
+    assert changed == ["r1"]
+    record = store.get_synced_routine("r1")
+    assert record["status"] == "missing_on_garmin"
+    # Only the status flips — the hash and workout id stay for the re-sync.
+    assert record["content_hash"] == "h1"
+    assert record["garmin_workout_id"] == "555"
+
+
+def test_none_listing_is_a_noop(tmp_path):
+    # A failed listing (auth/rate limit) must not be read as "everything deleted".
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1", garmin_workout_id="555")
+    assert reconcile_missing_routine_workouts(store, None) == []
+    assert store.get_synced_routine("r1")["status"] == "success"
+
+
+def test_missing_self_heals_when_workout_reappears(tmp_path):
+    # A false positive (e.g. truncated listing) recovers on the next reconcile.
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1", garmin_workout_id="555")
+    store.set_routine_status("r1", "missing_on_garmin")
+    changed = reconcile_missing_routine_workouts(store, [{"workoutId": 555}])
+    assert changed == ["r1"]
+    assert store.get_synced_routine("r1")["status"] == "success"
+
+
+def test_schedule_pending_is_not_promoted_to_success(tmp_path):
+    # Promoting a present-but-pending row would cancel its schedule retry.
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1", garmin_workout_id="555", status="schedule_pending")
+    assert reconcile_missing_routine_workouts(store, [{"workoutId": 555}]) == []
+    assert store.get_synced_routine("r1")["status"] == "schedule_pending"
+
+
+def test_schedule_pending_can_go_missing(tmp_path):
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1", garmin_workout_id="555", status="schedule_pending")
+    assert reconcile_missing_routine_workouts(store, []) == ["r1"]
+    assert store.get_synced_routine("r1")["status"] == "missing_on_garmin"
+
+
+def test_rows_without_workout_id_are_ignored(tmp_path):
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = _routine_store(tmp_path)
+    store.mark_routine_synced("r1")  # no garmin_workout_id
+    assert reconcile_missing_routine_workouts(store, []) == []
+    assert store.get_synced_routine("r1")["status"] == "success"
+
+
+def test_routine_reconcile_never_raises_on_broken_store():
+    from hevy2garmin.reconcile import reconcile_missing_routine_workouts
+    store = MagicMock()
+    store.list_synced_routines.side_effect = RuntimeError("db down")
+    assert reconcile_missing_routine_workouts(store, []) == []

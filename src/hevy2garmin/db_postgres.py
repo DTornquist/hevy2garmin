@@ -190,6 +190,24 @@ class PostgresDatabase(Database):
                 row = cur.fetchone()
                 return dict(row) if row else None
 
+    def list_synced_routines(self) -> list[dict]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
+                    "scheduled_date, content_hash, synced_at, status FROM synced_routines"
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    def set_routine_status(self, hevy_routine_id: str, status: str) -> None:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE synced_routines SET status = %s WHERE hevy_routine_id = %s",
+                    (status, hevy_routine_id),
+                )
+            conn.commit()
+
     def is_routine_synced(self, hevy_routine_id: str, hevy_updated_at: str | None = None) -> bool:
         record = self.get_synced_routine(hevy_routine_id)
         if record is None:

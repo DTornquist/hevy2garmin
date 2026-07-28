@@ -183,6 +183,26 @@ class SQLiteDatabase(Database):
                 "scheduled_date", "content_hash", "synced_at", "status")
         return dict(zip(keys, row))
 
+    def list_synced_routines(self) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
+            "scheduled_date, content_hash, synced_at, status FROM synced_routines"
+        ).fetchall()
+        conn.close()
+        keys = ("hevy_routine_id", "garmin_workout_id", "title", "hevy_updated_at",
+                "scheduled_date", "content_hash", "synced_at", "status")
+        return [dict(zip(keys, row)) for row in rows]
+
+    def set_routine_status(self, hevy_routine_id: str, status: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE synced_routines SET status = ? WHERE hevy_routine_id = ?",
+            (status, hevy_routine_id),
+        )
+        conn.commit()
+        conn.close()
+
     def is_routine_synced(self, hevy_routine_id: str, hevy_updated_at: str | None = None) -> bool:
         record = self.get_synced_routine(hevy_routine_id)
         if record is None:
