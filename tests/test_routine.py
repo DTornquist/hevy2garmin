@@ -381,7 +381,7 @@ class TestSyncRoutines:
         routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
         store, create_mock, schedule_mock, patches = self._patched(tmp_path, routines)
         store.mark_routine_synced("r1", garmin_workout_id="555",
-                                  scheduled_date="2026-08-01", content_hash="stale-hash")
+                                  scheduled_date="2999-08-01", content_hash="stale-hash")
         delete_mock = MagicMock()
         with patches[0], patches[1], patches[2], patches[3], patches[4], \
                 patch.object(sync_module, "delete_workout", delete_mock), patches[6], patches[7]:
@@ -391,9 +391,9 @@ class TestSyncRoutines:
         assert result["scheduled"] == 0
         # The new workout (777) is re-scheduled on the stored date...
         schedule_mock.assert_called_once()
-        assert schedule_mock.call_args[0][1:] == (777, "2026-08-01")
+        assert schedule_mock.call_args[0][1:] == (777, "2999-08-01")
         # ...and the date is kept on the record instead of being wiped to None.
-        assert store.get_synced_routine("r1")["scheduled_date"] == "2026-08-01"
+        assert store.get_synced_routine("r1")["scheduled_date"] == "2999-08-01"
 
     def test_resync_restores_all_recurring_dates(self, tmp_path: Path) -> None:
         # A recurring routine booked on 3 dates, then edited: the content-change re-sync
@@ -401,8 +401,8 @@ class TestSyncRoutines:
         routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
         store, create_mock, schedule_mock, patches = self._patched(tmp_path, routines)
         store.mark_routine_synced("r1", garmin_workout_id="555",
-                                  scheduled_date="2026-08-03", content_hash="stale-hash")
-        for d in ("2026-08-03", "2026-08-10", "2026-08-17"):
+                                  scheduled_date="2999-08-03", content_hash="stale-hash")
+        for d in ("2999-08-03", "2999-08-10", "2999-08-17"):
             store.add_routine_schedule("r1", f"old-{d}", d)
         schedule_mock.side_effect = lambda _client, _wid, day: f"new-{day}"
         with patches[0], patches[1], patches[2], patches[3], patches[4], \
@@ -411,10 +411,75 @@ class TestSyncRoutines:
         assert result["updated"] == 1
         # All three dates re-booked on the new workout, and tracked with fresh ids.
         assert sorted(c.args[2] for c in schedule_mock.call_args_list) == [
-            "2026-08-03", "2026-08-10", "2026-08-17"]
+            "2999-08-03", "2999-08-10", "2999-08-17"]
         assert set(store.get_routine_schedule_ids("r1")) == {
-            "new-2026-08-03", "new-2026-08-10", "new-2026-08-17"}
-        assert store.get_synced_routine("r1")["scheduled_date"] == "2026-08-03"
+            "new-2999-08-03", "new-2999-08-10", "new-2999-08-17"}
+        assert store.get_synced_routine("r1")["scheduled_date"] == "2999-08-03"
+
+    def test_resync_books_only_future_dates(self, tmp_path: Path) -> None:
+        # A recurring routine with past AND future bookings, re-synced: only the
+        # today-or-future dates are restored — re-booking a past date would plant a
+        # stale planned workout in calendar history.
+        routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
+        store, _, schedule_mock, patches = self._patched(tmp_path, routines)
+        store.mark_routine_synced("r1", garmin_workout_id="555",
+                                  scheduled_date="2000-01-01", content_hash="stale-hash")
+        for d in ("2000-01-01", "2999-01-01"):
+            store.add_routine_schedule("r1", f"old-{d}", d)
+        schedule_mock.side_effect = lambda _client, _wid, day: f"new-{day}"
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                patch.object(sync_module, "delete_workout", MagicMock()), patches[6], patches[7]:
+            result = sync_module.sync_routines()
+        assert result["updated"] == 1
+        schedule_mock.assert_called_once()
+        assert schedule_mock.call_args[0][1:] == (777, "2999-01-01")
+        assert store.get_routine_scheduled_dates("r1") == ["2999-01-01"]
+        assert store.get_synced_routine("r1")["scheduled_date"] == "2999-01-01"
+
+    def test_resync_prunes_when_all_dates_past(self, tmp_path: Path) -> None:
+        # Every prior booking is in the past: nothing is re-booked and the orphaned
+        # schedule rows are pruned (the old workout's entries cascaded away on Garmin).
+        routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
+        store, _, schedule_mock, patches = self._patched(tmp_path, routines)
+        store.mark_routine_synced("r1", garmin_workout_id="555",
+                                  scheduled_date="2000-01-01", content_hash="stale-hash")
+        for d in ("2000-01-01", "2000-01-08"):
+            store.add_routine_schedule("r1", f"old-{d}", d)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                patch.object(sync_module, "delete_workout", MagicMock()), patches[6], patches[7]:
+            result = sync_module.sync_routines()
+        assert result["updated"] == 1
+        schedule_mock.assert_not_called()
+        assert store.get_routine_schedule_ids("r1") == []
+        record = store.get_synced_routine("r1")
+        assert record["status"] == "success"
+        assert record["scheduled_date"] is None
+
+    def test_explicit_schedule_date_not_filtered(self, tmp_path: Path) -> None:
+        # An explicit schedule_date is the caller's choice and is booked verbatim,
+        # even in the past — only restored dates go through the future-only filter.
+        routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
+        store, _, schedule_mock, patches = self._patched(tmp_path, routines)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+            result = sync_module.sync_routines(schedule_date="2000-01-02")
+        assert result["scheduled"] == 1
+        schedule_mock.assert_called_once()
+        assert schedule_mock.call_args[0][1:] == (777, "2000-01-02")
+        assert store.get_synced_routine("r1")["scheduled_date"] == "2000-01-02"
+
+    def test_legacy_scheduled_date_fallback_filtered(self, tmp_path: Path) -> None:
+        # A legacy row (single scheduled_date, no routine_schedules entries) whose date
+        # is in the past: nothing is re-booked and the record's date resets to None.
+        routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
+        store, _, schedule_mock, patches = self._patched(tmp_path, routines)
+        store.mark_routine_synced("r1", garmin_workout_id="555",
+                                  scheduled_date="2000-01-01", content_hash="stale-hash")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                patch.object(sync_module, "delete_workout", MagicMock()), patches[6], patches[7]:
+            result = sync_module.sync_routines()
+        assert result["updated"] == 1
+        schedule_mock.assert_not_called()
+        assert store.get_synced_routine("r1")["scheduled_date"] is None
 
     def test_schedule_records_calendar_entry(self, tmp_path: Path) -> None:
         # A first sync with an explicit date books the Garmin calendar and records the
@@ -423,7 +488,7 @@ class TestSyncRoutines:
         store, _, schedule_mock, patches = self._patched(tmp_path, routines)
         schedule_mock.return_value = 2001
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
-            result = sync_module.sync_routines(schedule_date="2026-08-01")
+            result = sync_module.sync_routines(schedule_date="2999-08-01")
         assert result["scheduled"] == 1
         assert store.get_routine_schedule_ids("r1") == ["2001"]
 
@@ -436,7 +501,7 @@ class TestSyncRoutines:
         schedule_mock.side_effect = RuntimeError("Garmin 429")
 
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
-            first = sync_module.sync_routines(schedule_date="2026-08-01")
+            first = sync_module.sync_routines(schedule_date="2999-08-01")
 
         # The schedule failed, but the created workout is tracked (not orphaned).
         assert first["failed"] == 1
@@ -460,7 +525,7 @@ class TestSyncRoutines:
         delete_mock.assert_called_once_with(delete_mock.call_args[0][0], "777")
         final = store.get_synced_routine("r1")
         assert final["status"] == "success"
-        assert final["scheduled_date"] == "2026-08-01"
+        assert final["scheduled_date"] == "2999-08-01"
 
     def test_reconciles_marked_orphan_from_garmin_library(self, tmp_path: Path) -> None:
         # #3: the DB has no record (it was reset while the Garmin workout survived, or a

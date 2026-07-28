@@ -917,15 +917,25 @@ def _sync_one_routine(
 
         # Recreating the workout drops the calendar entries the old one had, so re-apply
         # the prior schedule when this run doesn't set a new one. An explicit schedule_date
-        # overrides; otherwise restore every date the routine had booked (recurring), with
+        # overrides; otherwise restore the dates the routine had booked (recurring), with
         # a fallback to the single stored date for rows predating per-entry tracking. Only
-        # an explicit schedule_date counts toward the "scheduled" stat.
+        # today-or-future dates are restored ("today" in the server's local timezone,
+        # matching the Upcoming table) — re-booking a past date would plant a stale
+        # planned workout in calendar history. Only an explicit schedule_date counts
+        # toward the "scheduled" stat.
         if schedule_date:
             dates_to_book = [schedule_date]
         else:
-            dates_to_book = store.get_routine_scheduled_dates(rid)
-            if not dates_to_book and (existing or {}).get("scheduled_date"):
-                dates_to_book = [existing["scheduled_date"]]
+            today = _date.today().isoformat()
+            prior_dates = store.get_routine_scheduled_dates(rid)
+            if not prior_dates and (existing or {}).get("scheduled_date"):
+                prior_dates = [existing["scheduled_date"]]
+            dates_to_book = [d for d in prior_dates if d >= today]
+            if prior_dates and not dates_to_book:
+                # Every prior date is in the past and the old workout was just deleted
+                # (its entries cascaded away on Garmin) — prune the orphaned rows, since
+                # no reschedule below will clear+rebook them.
+                store.clear_routine_schedules(rid)
         effective_schedule_date = min(dates_to_book) if dates_to_book else None
 
         scheduled = 0
