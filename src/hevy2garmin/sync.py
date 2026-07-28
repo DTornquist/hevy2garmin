@@ -846,15 +846,30 @@ def _build_library_by_name(garmin_client) -> dict[str, list[dict]]:
     return library_by_name
 
 
+def _hash_inputs(cfg: dict[str, Any]) -> tuple[str, int | None]:
+    """Resolve the payload-affecting config: ``(weight_unit, default_rest_seconds)``.
+
+    The single place these defaults live. Every producer of a routine payload hash
+    (:func:`routine_payload_hash` for the page badge, :func:`sync_routines` /
+    :func:`sync_routine` for the stored ``content_hash``) must resolve them here —
+    a default changed in only one spot would make the badge and the sync skip check
+    silently disagree. ``or {}`` guards against a config key present but explicitly
+    null; the rest fallback mirrors the FIT timing default used for logged workouts.
+    """
+    weight_unit = (cfg.get("sync") or {}).get("weight_unit", "kilogram")
+    default_rest_seconds = (cfg.get("timing") or {}).get("rest_between_sets_seconds", 75)
+    return weight_unit, default_rest_seconds
+
+
 def routine_payload_hash(routine: dict, cfg: dict[str, Any]) -> str:
     """Hash of the Garmin payload ``routine`` would sync as (pure/local, no network).
 
     Single source of truth for "has this routine changed since last sync" — the
     /routines page badge and :func:`_sync_one_routine`'s skip check must agree, so
-    this resolves weight_unit and the rest default exactly like :func:`sync_routines`.
+    this resolves weight_unit and the rest default via the same :func:`_hash_inputs`
+    that :func:`sync_routines` uses.
     """
-    weight_unit = (cfg.get("sync") or {}).get("weight_unit", "kilogram")
-    default_rest_seconds = (cfg.get("timing") or {}).get("rest_between_sets_seconds", 75)
+    weight_unit, default_rest_seconds = _hash_inputs(cfg)
     return workout_content_hash(
         routine_to_garmin_workout(
             routine, weight_unit=weight_unit, default_rest_seconds=default_rest_seconds
@@ -1017,11 +1032,7 @@ def sync_routines(
     garmin_email = overrides.get("garmin_email") or cfg.get("garmin_email")
     garmin_password = overrides.get("garmin_password") or cfg.get("garmin_password", "")
     garmin_token_dir = cfg.get("garmin_token_dir", "~/.garminconnect")
-    # ``or {}`` guards against a config key present but explicitly null.
-    weight_unit = (cfg.get("sync") or {}).get("weight_unit", "kilogram")
-    # Fallback rest between sets when a Hevy routine doesn't specify one, mirroring
-    # the FIT timing default used for logged workouts.
-    default_rest_seconds = (cfg.get("timing") or {}).get("rest_between_sets_seconds", 75)
+    weight_unit, default_rest_seconds = _hash_inputs(cfg)
 
     hevy = HevyClient(api_key=hevy_api_key)
     routines = fetch_all_routines(hevy)
@@ -1082,8 +1093,7 @@ def sync_routine(
     garmin_email = overrides.get("garmin_email") or cfg.get("garmin_email")
     garmin_password = overrides.get("garmin_password") or cfg.get("garmin_password", "")
     garmin_token_dir = cfg.get("garmin_token_dir", "~/.garminconnect")
-    weight_unit = (cfg.get("sync") or {}).get("weight_unit", "kilogram")
-    default_rest_seconds = (cfg.get("timing") or {}).get("rest_between_sets_seconds", 75)
+    weight_unit, default_rest_seconds = _hash_inputs(cfg)
 
     hevy = HevyClient(api_key=hevy_api_key)
     routine = next(
