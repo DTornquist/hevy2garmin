@@ -858,6 +858,82 @@ class TestRoutineSyncUI:
         assert "demo mode" in resp.text
 
 
+class TestRoutinesPageUI:
+    """GET /routines — the 'Updated on Hevy' drift badge."""
+
+    def _client(self, store: SQLiteDatabase):
+        srv._is_configured_cache = True  # skip the "not configured → /setup" redirect
+        return patch.object(srv.db, "get_db", return_value=store), TestClient(srv.app)
+
+    _ROUTINE = {"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z",
+                "exercises": [{"title": "Bench Press (Barbell)",
+                               "sets": [{"type": "normal", "reps": 5, "weight_kg": 60}]}]}
+
+    def _get_routines_page(self, store: SQLiteDatabase, routine: dict) -> str:
+        db_patch, client = self._client(store)
+        hevy = MagicMock()
+        hevy.get_routines.return_value = {"routines": [routine], "page_count": 1}
+        with db_patch, client, \
+                patch.object(srv, "load_config", return_value={"hevy_api_key": "k"}), \
+                patch("hevy2garmin.hevy.HevyClient", return_value=hevy):
+            return client.get("/routines").text
+
+    def test_badge_shown_when_routine_drifted(self, tmp_path: Path) -> None:
+        store = SQLiteDatabase(tmp_path / "ui.db")
+        store.mark_routine_synced("r1", garmin_workout_id="555", content_hash="stale-hash")
+        html = self._get_routines_page(store, dict(self._ROUTINE))
+        assert "Updated on Hevy" in html
+        assert ">Update<" in html  # the sync button relabels
+        assert "changed on Hevy" in html  # sync-bar subtitle counts it
+
+    def test_badge_absent_when_hash_matches(self, tmp_path: Path) -> None:
+        store = SQLiteDatabase(tmp_path / "ui.db")
+        current = sync_module.routine_payload_hash(dict(self._ROUTINE), {"hevy_api_key": "k"})
+        store.mark_routine_synced("r1", garmin_workout_id="555", content_hash=current)
+        html = self._get_routines_page(store, dict(self._ROUTINE))
+        assert "Updated on Hevy" not in html
+        assert ">Re-sync<" in html
+
+    def test_badge_absent_when_never_synced(self, tmp_path: Path) -> None:
+        store = SQLiteDatabase(tmp_path / "ui.db")
+        html = self._get_routines_page(store, dict(self._ROUTINE))
+        assert "Updated on Hevy" not in html
+        assert "Not synced" in html
+
+    def test_legacy_row_without_hash_counts_as_drifted(self, tmp_path: Path) -> None:
+        # Rows synced before content hashing have no stored hash; a sync would
+        # recreate them, so the badge must agree and show.
+        store = SQLiteDatabase(tmp_path / "ui.db")
+        store.mark_routine_synced("r1", garmin_workout_id="555")
+        html = self._get_routines_page(store, dict(self._ROUTINE))
+        assert "Updated on Hevy" in html
+
+    def test_hash_failure_degrades_to_no_badge(self, tmp_path: Path) -> None:
+        # A routine the payload builder can't process must not break the page.
+        store = SQLiteDatabase(tmp_path / "ui.db")
+        store.mark_routine_synced("r1", garmin_workout_id="555", content_hash="stale-hash")
+        db_patch, client = self._client(store)
+        hevy = MagicMock()
+        hevy.get_routines.return_value = {"routines": [dict(self._ROUTINE)], "page_count": 1}
+        with db_patch, client, \
+                patch.object(srv, "load_config", return_value={"hevy_api_key": "k"}), \
+                patch("hevy2garmin.hevy.HevyClient", return_value=hevy), \
+                patch("hevy2garmin.sync.routine_to_garmin_workout",
+                      side_effect=RuntimeError("bad routine")):
+            html = client.get("/routines").text
+        assert "Updated on Hevy" not in html
+        assert "✓ Synced" in html
+
+    def test_payload_hash_matches_sync_internal_hash(self) -> None:
+        # The page badge and _sync_one_routine's skip check must never disagree:
+        # same routine + default config → identical hash string.
+        routine = dict(self._ROUTINE)
+        expected = workout_content_hash(
+            routine_to_garmin_workout(routine, weight_unit="kilogram", default_rest_seconds=75)
+        )
+        assert sync_module.routine_payload_hash(routine, {}) == expected
+
+
 class TestDbFacade:
     def test_get_synced_routine_facade_delegates(self) -> None:
         # Regression: the `db` module facade must expose get_synced_routine, else

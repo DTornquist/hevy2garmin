@@ -101,7 +101,8 @@
       <div style="margin-right:auto;">
         <div style="font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px;"><span style="color:var(--accent);">⚡</span> {{ stats.synced }} of {{ stats.total }} routines on Garmin</div>
         <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-          {% if stats.pending %}{{ stats.pending }} still pending — sync them in one go.{% else %}Everything is on your Garmin calendar.{% endif %}
+          {% if stats.pending %}{{ stats.pending }} still pending — sync them in one go.{% elif stats.needs_update %}{{ stats.needs_update }} changed on Hevy — sync to update.{% else %}Everything is on your Garmin calendar.{% endif %}
+          {% if stats.pending and stats.needs_update %}{{ stats.needs_update }} changed on Hevy since the last sync.{% endif %}
         </div>
       </div>
       <label style="display:flex; gap:6px; align-items:center; color:var(--text-muted); font-size:13px;" title="Re-create even routines already synced">
