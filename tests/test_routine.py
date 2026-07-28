@@ -315,6 +315,25 @@ class TestSyncRoutines:
         payload = routine_to_garmin_workout(routine, weight_unit="kilogram", default_rest_seconds=75)
         return workout_content_hash(payload)
 
+    def test_stored_content_hash_matches_routine_payload_hash(self, tmp_path: Path) -> None:
+        # Binds the page badge's hash to the one the sync actually persists: a real
+        # sync runs end-to-end, then routine_payload_hash — fed the same config the
+        # sync loaded (no sync/timing keys → both resolve the defaults through
+        # _hash_inputs) — must reproduce the stored content_hash exactly. If the
+        # config resolution ever diverges between badge and sync, this fails.
+        # Two sets with weight and no explicit rest, so the payload actually
+        # depends on BOTH hash inputs (a rest step lands between the sets).
+        routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z",
+                     "exercises": [{"title": "Bench Press (Barbell)",
+                                    "sets": [{"type": "normal", "reps": 5, "weight_kg": 60},
+                                             {"type": "normal", "reps": 5, "weight_kg": 60}]}]}]
+        store, _, _, patches = self._patched(tmp_path, routines)
+        cfg = {"hevy_api_key": "k", "garmin_email": "e", "garmin_password": "p"}
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+            sync_module.sync_routines()
+        stored = store.get_synced_routine("r1")["content_hash"]
+        assert stored == sync_module.routine_payload_hash(routines[0], cfg)
+
     def test_skips_when_hash_unchanged(self, tmp_path: Path) -> None:
         routines = [{"id": "r1", "title": "Push", "updated_at": "2026-01-01T00:00:00Z", "exercises": []}]
         store, create_mock, _, patches = self._patched(tmp_path, routines)
