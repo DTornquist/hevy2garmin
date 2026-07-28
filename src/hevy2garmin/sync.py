@@ -846,6 +846,22 @@ def _build_library_by_name(garmin_client) -> dict[str, list[dict]]:
     return library_by_name
 
 
+def routine_payload_hash(routine: dict, cfg: dict[str, Any]) -> str:
+    """Hash of the Garmin payload ``routine`` would sync as (pure/local, no network).
+
+    Single source of truth for "has this routine changed since last sync" — the
+    /routines page badge and :func:`_sync_one_routine`'s skip check must agree, so
+    this resolves weight_unit and the rest default exactly like :func:`sync_routines`.
+    """
+    weight_unit = (cfg.get("sync") or {}).get("weight_unit", "kilogram")
+    default_rest_seconds = (cfg.get("timing") or {}).get("rest_between_sets_seconds", 75)
+    return workout_content_hash(
+        routine_to_garmin_workout(
+            routine, weight_unit=weight_unit, default_rest_seconds=default_rest_seconds
+        )
+    )
+
+
 def _sync_one_routine(
     routine: dict,
     store,

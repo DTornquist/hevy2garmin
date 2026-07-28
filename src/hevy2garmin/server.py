@@ -1513,7 +1513,7 @@ async def routines_page(request: Request):
         schedules = {"scheduled_workouts": [], "page": 1, "total_pages": 1, "sched_total": 0}
     try:
         from hevy2garmin.hevy import HevyClient
-        from hevy2garmin.sync import fetch_all_routines, _cache_routines_total
+        from hevy2garmin.sync import fetch_all_routines, _cache_routines_total, routine_payload_hash
 
         _db = db.get_db()
         hevy = HevyClient(api_key=config.get("hevy_api_key"))
@@ -1528,12 +1528,22 @@ async def routines_page(request: Request):
                 }
                 for ex in (r.get("exercises") or [])
             ]
+            # The routine drifted on Hevy since the last sync when the payload it
+            # would produce now no longer hashes to what we synced. Legacy rows with
+            # no stored hash count as drifted — a sync would recreate them too.
+            needs_update = False
+            if record is not None:
+                try:
+                    needs_update = record.get("content_hash") != routine_payload_hash(r, config)
+                except Exception:
+                    logger.debug("Could not hash routine %s", r.get("id"), exc_info=True)
             routines.append({
                 "id": r.get("id", ""),
                 "title": r.get("title") or r.get("name") or "Routine",
                 "exercises": exercises,
                 "exercise_count": len(exercises),
                 "synced": record is not None,
+                "needs_update": needs_update,
                 "scheduled_date": (record or {}).get("scheduled_date"),
             })
     except Exception:
@@ -1546,6 +1556,7 @@ async def routines_page(request: Request):
         "total": total,
         "synced": synced,
         "pending": max(0, total - synced),
+        "needs_update": sum(1 for r in routines if r["needs_update"]),
         "scheduled": sum(1 for r in routines if r["scheduled_date"]),
         "pct": round(synced / total * 100) if total else 0,
     }
