@@ -421,7 +421,14 @@ def create_workout(client: Garmin, payload: dict) -> int | None:
 
 
 def list_workouts(client: Garmin, limit: int = 100) -> list[dict]:
-    """List the user's saved Garmin workouts (for idempotency / reconciliation)."""
+    """List the user's saved Garmin workouts (for idempotency / reconciliation).
+
+    Raises on a non-list 2xx body (an error envelope or a shape drift) so callers
+    treat it as "unknown" rather than an empty library. Reading an error-as-200 as
+    ``[]`` would make routine reconciliation flag every synced routine as deleted on
+    Garmin. Both callers wrap this in a best-effort try/except, so a raise degrades
+    to the last-known DB state instead of acting on a false empty listing.
+    """
     time.sleep(1.0)  # manual rate limit
     resp = client.client.request(
         "GET",
@@ -429,7 +436,12 @@ def list_workouts(client: Garmin, limit: int = 100) -> list[dict]:
         f"/workout-service/workouts?start=1&limit={limit}&myWorkoutsOnly=true",
     )
     data = resp.json() if hasattr(resp, "json") else resp
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        raise RuntimeError(
+            f"Garmin workout listing returned a {type(data).__name__}, not a list; "
+            "treating as unknown rather than empty"
+        )
+    return data
 
 
 def delete_workout(client: Garmin, workout_id: int | str) -> None:
