@@ -331,6 +331,54 @@ The dashboard has no login by default (fine for a private local install). **If y
 
 See [`.env.example`](.env.example) for all the related variables.
 
+## Self-hosting
+
+The Vercel deploy is the quickest way to run hevy2garmin, but it is not the only one. Running it on your own machine — a spare box, a NAS, a Raspberry Pi — keeps your Hevy and Garmin data on hardware you control, and removes the once-a-day cron ceiling that serverless imposes.
+
+### Docker Compose (recommended)
+
+```bash
+git clone https://github.com/drkostas/hevy2garmin.git
+cd hevy2garmin
+cp .env.example .env      # set HEVY_API_KEY and H2G_PASSWORD
+docker compose up -d --build
+```
+
+Open [localhost:8123](http://localhost:8123) and connect Garmin from the setup page.
+
+The compose file uses named volumes for the sync database and the Garmin token store. Keep them: the token store is what saves you re-authenticating with Garmin (tokens last roughly a year), and the database is what stops already-synced workouts uploading twice.
+
+It also binds the port to `127.0.0.1` rather than all interfaces, drops all capabilities, and sets `no-new-privileges`. The image runs as an unprivileged user (uid 999).
+
+### Keeping credentials on your own machine
+
+Two settings matter if the point of self-hosting is that nothing leaves your network:
+
+- **`H2G_DIRECT_GARMIN_LOGIN=true`** — collect your Garmin password and MFA code on your own instance and run the login there, instead of posting them to the hosted exchange worker the Vercel deploy uses. Off by default; the worker path is unchanged unless you set this. Requires a writable home directory, so it is for self-hosted installs only, not serverless.
+The resulting token store lives in `~/.garminconnect` by default (`garmin_token_dir` in `~/.hevy2garmin/config.json`). Back that directory up and you will not have to log in again after a rebuild — which is what the `garmin_auth` volume in the compose file is for.
+
+Your Hevy API key stays local either way.
+
+### Behind a reverse proxy
+
+Put the dashboard behind nginx, Caddy or Traefik on a subdomain, terminate TLS there, and keep the container bound to `127.0.0.1`. **Set `H2G_PASSWORD` before exposing it** — see [Securing the dashboard](#securing-the-dashboard).
+
+Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works. Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) is not fully supported yet: the templates build some URLs in JavaScript against the origin root, so those requests escape the prefix.
+
+### Keeping it in sync
+
+Auto-sync runs on a timer inside the process, so a self-hosted instance can poll as often as you like — enable it and set the interval on the dashboard. This is the main practical difference from the Vercel deploy, where scheduling comes from a platform cron that is limited to once per day on Vercel's Hobby plan.
+
+### Running as a non-root user
+
+The image runs as uid 999. Named volumes (what the compose file uses) are handled automatically. If you use **bind mounts** instead — the `-v ~/.hevy2garmin:/root/.hevy2garmin` form shown in the Docker section — grant that user access once:
+
+```bash
+sudo chown -R 999:999 ~/.hevy2garmin ~/.garminconnect
+```
+
+The paths inside the container are unchanged, so nothing needs moving.
+
 ## Updating
 
 ### Vercel (fork-based deploy)
