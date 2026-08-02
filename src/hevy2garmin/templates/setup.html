@@ -219,7 +219,7 @@ async function handleGarminLoginResponse(data) {
             return;
         }
         // Persist tokens on our server
-        const storeResp = await fetch('/api/garmin-ticket', {
+        const storeResp = await fetch(window.APP_PREFIX + '/api/garmin-ticket', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tokens: {
@@ -260,7 +260,7 @@ async function handleGarminLoginResponse(data) {
     if (data.status === 'rate_limited') {
         // Record the cooldown server-side so the dashboard can display it,
         // then disable the Connect button so the user can't retry and reset Garmin's timer.
-        fetch('/api/garmin-rate-limited', { method: 'POST' }).catch(function() {});
+        fetch(window.APP_PREFIX + '/api/garmin-rate-limited', { method: 'POST' }).catch(function() {});
         var connectBtn = document.getElementById('garmin_connect_btn');
         if (connectBtn) { connectBtn.disabled = true; }
         result.innerHTML = '<span style="color: var(--red);">&#10007; Garmin rate-limited this account on their side (separate from your password, your Garmin app still works). It clears on its own, usually within a few hours. Repeated retries just reset the timer, so leave it a while and try once more.</span>';
@@ -346,7 +346,7 @@ async function exchangeTicket() {
             return;
         }
         // Step 2: Store tokens on our server (garmin-auth >= 0.3.0 single-file DI format)
-        const storeResp = await fetch('/api/garmin-ticket', {
+        const storeResp = await fetch(window.APP_PREFIX + '/api/garmin-ticket', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tokens: {

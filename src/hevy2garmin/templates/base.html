@@ -9,6 +9,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Sub-path this app is mounted under behind a reverse proxy; empty at the
+         root. A proxy can rewrite root-absolute href/src/action attributes, but
+         not URLs that JavaScript builds at runtime — those must use this. -->
+    <script>window.APP_PREFIX = {{ (url_prefix or '')|tojson }};</script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <style>

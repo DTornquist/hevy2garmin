@@ -363,7 +363,30 @@ Your Hevy API key stays local either way.
 
 Put the dashboard behind nginx, Caddy or Traefik on a subdomain, terminate TLS there, and keep the container bound to `127.0.0.1`. **Set `H2G_PASSWORD` before exposing it** — see [Securing the dashboard](#securing-the-dashboard).
 
-Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works. Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) is not fully supported yet: the templates build some URLs in JavaScript against the origin root, so those requests escape the prefix.
+Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works with no extra configuration.
+
+Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) works too, as long as the proxy tells the app which sub-path it is mounted at. Send `X-Forwarded-Prefix` and strip the prefix from the forwarded path:
+
+```nginx
+location /hevy2garmin/ {
+    proxy_pass http://127.0.0.1:8123/;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /hevy2garmin;
+}
+```
+
+Caddy equivalent:
+
+```caddyfile
+handle_path /hevy2garmin/* {
+    reverse_proxy 127.0.0.1:8123 {
+        header_up X-Forwarded-Prefix /hevy2garmin
+    }
+}
+```
+
+The app then emits every link, asset, form action, htmx call, redirect and JavaScript-built API URL under that prefix. The proxy does **not** need to rewrite response bodies. Without the header nothing changes, so a root install and the Vercel deploy are unaffected.
 
 ### Keeping it in sync
 
