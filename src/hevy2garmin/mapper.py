@@ -355,7 +355,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Lunge":                                    (17, 32),  # lunge / lunge
     "Lunge (Barbell)":                          (17, 10),  # lunge / barbell_lunge
     "Lunge (Dumbbell)":                         (17, 21),  # lunge / dumbbell_lunge
-    "Overhead Dumbbell Lunge":                  (17, 40),  # lunge / overhead_dumbbell_lunge
+    "Overhead Dumbbell Lunge":                  (17, 40),  # lunge / overhead_dumbbell_reverse_lunge
     "Reverse Lunge":                            (17, 32),  # lunge / lunge (reverse variant)
     "Reverse Lunge (Barbell)":                  (17, 11),  # lunge / barbell_reverse_lunge
     "Reverse Lunge (Dumbbell)":                 (17, 21),  # lunge / dumbbell_lunge (reverse)
@@ -449,7 +449,8 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     #  CORE – Core (category 5)
     # ======================================================================= #
     "Ab Scissors":                              (5, 49),   # core / bicycle (closest scissors)
-    "Cable Core Palloff Press":                 (5, 46),   # core / russian_twist (closest anti-rotation)
+    "Cable Core Pallof Press":                  (5, 6),    # core / cable_core_press (exact anti-rotation match)
+    "Cable Core Palloff Press":                 (5, 6),    # alias: earlier misspelling of the above
     "Cable Twist (Down to up)":                 (4, 2),    # chop / cable_woodchop (twist variant)
     "Cable Twist (Up to down)":                 (4, 2),    # chop / cable_woodchop (twist variant)
     "Russian Twist (Bodyweight)":               (5, 46),   # core / russian_twist
@@ -553,7 +554,6 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     #  CARRY (category 3)
     # ======================================================================= #
     "Farmers Walk":                             (3, 1),    # carry / farmers_walk
-    "Overhead Dumbbell Lunge":                  (3, 4),    # carry / overhead_carry (closest overhead lunge/carry)
 
     # ======================================================================= #
     #  WARM UP (category 31)

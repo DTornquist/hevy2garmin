@@ -136,6 +136,29 @@ class TestSaveCustomMappingCloud:
         m._custom_mappings.clear()
 
 
+class TestNoDuplicateKeys:
+    """A repeated key in the table literal is invisible: Python keeps the last
+    one, so an exact FIT mapping can be silently replaced by an approximation
+    added later under a different category heading."""
+
+    def test_table_has_no_repeated_keys(self) -> None:
+        import collections
+        import re
+
+        source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
+        table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
+        keys = re.findall(r'^\s{4}"([^"]+)":\s*\(', table, re.M)
+        repeated = [k for k, n in collections.Counter(keys).items() if n > 1]
+        assert not repeated, f"exercise defined more than once: {repeated}"
+
+    def test_overhead_dumbbell_lunge_is_a_lunge(self) -> None:
+        """It has a LUNGE mapping, so the later CARRY entry must not win."""
+        from hevy2garmin.merge import _category_to_string
+
+        cat, sub, _ = lookup_exercise("Overhead Dumbbell Lunge")
+        assert _category_to_string(cat) == "LUNGE", (cat, sub)
+
+
 class TestGenericSubcategory:
     """Subcategory 0 is a real exercise, not a "no specific exercise" marker.
 
@@ -161,6 +184,22 @@ class TestGenericSubcategory:
         cat, sub, _ = lookup_exercise("Swimming")
         assert _category_to_string(cat) == "CARDIO"
         assert _exercise_to_string(cat, sub) != "BOB_AND_WEAVE_CIRCLE"
+
+
+class TestPallofPress:
+    def test_hevy_spelling_resolves(self) -> None:
+        """Hevy's catalog spells it "Pallof" (one l), which had no entry."""
+        from hevy2garmin.merge import _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Cable Core Pallof Press")
+        assert _exercise_to_string(cat, sub) == "CABLE_CORE_PRESS"
+
+    def test_old_spelling_still_resolves(self) -> None:
+        """The previous misspelling stays mapped so older data keeps working."""
+        from hevy2garmin.merge import _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Cable Core Palloff Press")
+        assert _exercise_to_string(cat, sub) == "CABLE_CORE_PRESS"
 
 
 class TestValidCategories:
