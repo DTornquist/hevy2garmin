@@ -137,6 +137,7 @@
 
 <script>
 const GARMIN_WORKER_BASE = 'https://hevy2garmin-exchange-di.gkos.workers.dev';
+const DIRECT_LOGIN = {{ direct_garmin_login | default(false) | tojson }};
 
 // ── Garmin inline login (preferred UX, no copy-paste) ──────────────────────
 
@@ -154,7 +155,8 @@ async function garminConnect() {
     btn.disabled = true;
     result.innerHTML = '<span style="color: var(--text-muted);">Connecting to Garmin...</span>';
     try {
-        const resp = await fetch(GARMIN_WORKER_BASE + '/login', {
+        const url = DIRECT_LOGIN ? '/api/garmin-login' : (GARMIN_WORKER_BASE + '/login');
+        const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email, password: password }),
@@ -183,10 +185,14 @@ async function garminSubmitMfa() {
     btn.disabled = true;
     result.innerHTML = '<span style="color: var(--text-muted);">Verifying code...</span>';
     try {
-        const resp = await fetch(GARMIN_WORKER_BASE + '/login-mfa', {
+        const url = DIRECT_LOGIN ? '/api/garmin-login-mfa' : (GARMIN_WORKER_BASE + '/login-mfa');
+        const body = DIRECT_LOGIN
+            ? { session_id: garminMfaSessionId, code: code }
+            : { session_id: garminMfaSessionId, mfa_code: code };
+        const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: garminMfaSessionId, mfa_code: code }),
+            body: JSON.stringify(body),
         });
         const data = await resp.json();
         await handleGarminLoginResponse(data);
