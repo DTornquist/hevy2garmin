@@ -159,6 +159,33 @@ class TestNoDuplicateKeys:
         assert _category_to_string(cat) == "LUNGE", (cat, sub)
 
 
+class TestGenericSubcategory:
+    """Subcategory 0 is a real exercise, not a "no specific exercise" marker.
+
+    FIT's unset value is 65535. An entry meant to say "this category, nothing
+    more specific" that uses 0 instead resolves to whatever exercise happens to
+    be first in that category — cardio/0 is BOB_AND_WEAVE_CIRCLE, so Swimming
+    uploaded to Garmin under that name.
+    """
+
+    def test_entries_documented_as_generic_use_the_sentinel(self) -> None:
+        import re
+
+        source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
+        table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
+        wrong = re.findall(
+            r'^\s{4}"([^"]+)":\s+\(\d+, 0\),\s+#.*generic.*$', table, re.M
+        )
+        assert not wrong, f"'generic' entries using subcategory 0 instead of 65535: {wrong}"
+
+    def test_swimming_is_not_a_boxing_drill(self) -> None:
+        from hevy2garmin.merge import _category_to_string, _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Swimming")
+        assert _category_to_string(cat) == "CARDIO"
+        assert _exercise_to_string(cat, sub) != "BOB_AND_WEAVE_CIRCLE"
+
+
 class TestValidCategories:
     """Bug B: some mappings used FIT categories (33-52) the installed fit_tool
     doesn't implement, so they silently fell back to TOTAL_BODY instead of their
@@ -190,3 +217,59 @@ class TestValidCategories:
         from hevy2garmin.merge import _exercise_to_string
         cat, sub, _ = lookup_exercise("Chest Supported Incline Row (Dumbbell)")
         assert _exercise_to_string(cat, sub) == "DUMBBELL_ROW"
+
+
+class TestTemplateIdDoesNotOverrideTheTable:
+    """TEMPLATE_TO_GARMIN is generated from HEVY_TO_GARMIN and goes stale.
+
+    While it was consulted first, every fix to the table was reverted for any
+    workout carrying a template id — which is every workout the Hevy API
+    returns. The generated copy still holds categories the table's own
+    validity test forbids.
+    """
+
+    def test_template_map_categories_are_valid(self) -> None:
+        from hevy2garmin.merge import _category_to_string
+        from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
+
+        bad = {
+            tid: (c, s)
+            for tid, (c, s) in TEMPLATE_TO_GARMIN.items()
+            if c != _UNKNOWN_CATEGORY and _category_to_string(c) == "UNKNOWN"
+        }
+        assert not bad, f"template ids with invalid categories: {bad}"
+
+    def test_cardio_machines_map_to_cardio_with_a_template_id(self) -> None:
+        """The same guarantee as TestValidCategories, on the path really used."""
+        import re
+
+        from hevy2garmin.merge import _category_to_string
+        from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
+
+        source = (
+            Path(__file__).parent.parent / "src" / "hevy2garmin" / "template_map.py"
+        ).read_text()
+        for name in ("Cycling", "Treadmill", "Elliptical Trainer", "Rowing Machine"):
+            m = re.search(rf'"([0-9A-F]+)": \([\d, ]+\),\s+# {re.escape(name)}$', source, re.M)
+            assert m, f"no template id found for {name}"
+            tid = m.group(1)
+            assert tid in TEMPLATE_TO_GARMIN
+            cat, sub, _ = lookup_exercise(name, template_id=tid)
+            assert _category_to_string(cat) == "CARDIO", (name, cat, sub)
+
+    def test_table_wins_over_a_stale_template_entry(self) -> None:
+        from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
+
+        tid = next(iter(TEMPLATE_TO_GARMIN))
+        with patch.dict(TEMPLATE_TO_GARMIN, {tid: (99, 99)}):
+            cat, sub, _ = lookup_exercise("Bench Press (Barbell)", template_id=tid)
+            assert (cat, sub) == HEVY_TO_GARMIN["Bench Press (Barbell)"]
+
+    def test_template_id_still_resolves_names_not_in_the_table(self) -> None:
+        """The #173 non-English case must keep working."""
+        from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
+
+        tid = next(iter(TEMPLATE_TO_GARMIN))
+        cat, sub, name = lookup_exercise("Agachamento Búlgaro", template_id=tid)
+        assert (cat, sub) == TEMPLATE_TO_GARMIN[tid]
+        assert name == "Agachamento Búlgaro"

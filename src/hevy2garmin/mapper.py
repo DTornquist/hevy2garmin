@@ -557,7 +557,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     # ======================================================================= #
     #  WARM UP (category 31)
     # ======================================================================= #
-    "Warm Up":                                  (31, 0),   # warm_up / generic warm up
+    "Warm Up":                                  (31, 65535),  # warm_up / generic warm up
 
     # ======================================================================= #
     #  FLEXIBILITY / STABILITY – mapped to known FIT categories
@@ -565,7 +565,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Bird Dog":                                 (11, 1),   # hip_stability / dead_bug (closest quadruped stability)
     "Dead Bug":                                 (11, 1),   # hip_stability / dead_bug
     "Dead Hang":                                (21, 38),  # pull_up / pull_up (hang variant – grip/lat endurance)
-    "Downward Dog":                             (31, 0),   # warm_up / generic (yoga pose)
+    "Downward Dog":                             (31, 65535),  # warm_up / generic (yoga pose)
     "Front Lever Hold":                         (21, 38),  # pull_up / pull_up (front lever)
     "Front Lever Raise":                        (21, 38),  # pull_up / pull_up (front lever)
     "Handstand Hold":                           (22, 25),  # push_up / handstand_push_up (hold variant)
@@ -588,28 +588,28 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     # ======================================================================= #
     #  CARDIO / MACHINES — uses newer FIT SDK categories (33+) where available
     # ======================================================================= #
-    "Aerobics":                                 (2, 0),    # cardio / generic
+    "Aerobics":                                 (2, 65535),   # cardio / generic
     "Air Bike":                                 (2, 65535),   # CARDIO / generic
     "Battle Ropes":                             (2, 65535),   # CARDIO / generic
     "Boxing":                                   (2, 65535),   # CARDIO / generic
-    "Climbing":                                 (2, 0),    # cardio / generic
+    "Climbing":                                 (2, 65535),   # cardio / generic
     "Cycling":                                  (2, 65535),   # CARDIO / generic
     "Elliptical Trainer":                       (2, 65535),   # CARDIO / generic
-    "HIIT":                                     (2, 0),    # cardio / generic
+    "HIIT":                                     (2, 65535),   # cardio / generic
     "Hiking":                                   (32, 1),   # run / walk (hiking = walking)
     "Jump Rope":                                (2, 6),    # cardio / jump_rope
     "Jumping Jack":                             (2, 12),   # cardio / jumping_jacks
-    "Pilates":                                  (2, 0),    # cardio / generic
+    "Pilates":                                  (2, 65535),   # cardio / generic
     "Rowing Machine":                           (2, 65535),   # CARDIO / generic
-    "Skating":                                  (2, 0),    # cardio / generic
-    "Skiing":                                   (2, 0),    # cardio / generic
-    "Snowboarding":                             (2, 0),    # cardio / generic
+    "Skating":                                  (2, 65535),   # cardio / generic
+    "Skiing":                                   (2, 65535),   # cardio / generic
+    "Snowboarding":                             (2, 65535),   # cardio / generic
     "Spinning":                                 (2, 65535),   # CARDIO / generic
-    "Stretching":                               (31, 0),   # warm_up / generic (stretching)
-    "Swimming":                                 (2, 0),    # cardio / generic
+    "Stretching":                               (31, 65535),  # warm_up / generic (stretching)
+    "Swimming":                                 (2, 65535),   # cardio / generic
     "Treadmill":                                (2, 65535),   # CARDIO / generic
     "Yoga":                                     (29, 65535),   # TOTAL_BODY / generic (not a Garmin strength exercise)
-    "High Knees":                               (2, 0),    # cardio / generic
+    "High Knees":                               (2, 65535),   # cardio / generic
     "Sprints":                                  (32, 3),   # run / sprint
     "Cable Pull Through":                       (10, 11),  # hip_raise / hip_raise (cable pull-through = hip hinge)
 
@@ -708,25 +708,36 @@ def lookup_exercise(hevy_name: str, template_id: str | None = None) -> tuple[int
 
     Resolution order:
       1. Custom user mapping, keyed by the user's own exercise name.
-      2. Hevy ``exercise_template_id``, which is the same regardless of the
-         user's Hevy language, so non-English exercises map automatically (#173).
-      3. The built-in English-name table.
+      2. The built-in English-name table.
+      3. Hevy ``exercise_template_id``, which is the same regardless of the
+         user's Hevy language, so non-English exercises still map (#173).
+
+    The table is consulted before the template id even though the template id
+    is the more precise key. ``TEMPLATE_TO_GARMIN`` is generated *from* this
+    table by ``scripts/gen_template_map.py`` and is only regenerated on
+    demand, so between regenerations it is a stale copy — and when it came
+    first, every correction made here was silently reverted for any workout
+    that carried a template id, which is all of them from the Hevy API. Its
+    job is to cover names this table does not have (a non-English Hevy
+    locale), so it belongs after it, not before.
+
     Returns sentinel category ``65534`` if not found anywhere.
     """
     _ensure_custom_loaded()
-    # Custom mappings take priority
+    # 1. Custom mappings take priority.
     if hevy_name in _custom_mappings:
         cat, subcat = _custom_mappings[hevy_name]
         return (cat, subcat, hevy_name)
-    # Language-independent template-id match
+    # 2. Built-in English-name table — hand-maintained and covered by tests.
+    pair = HEVY_TO_GARMIN.get(hevy_name)
+    if pair is not None:
+        return (pair[0], pair[1], hevy_name)
+    # 3. Language-independent template-id match (#173), for names the English
+    #    table does not carry.
     if template_id:
         pair = TEMPLATE_TO_GARMIN.get(template_id)
         if pair is not None:
             return (pair[0], pair[1], hevy_name)
-    # Built-in English-name mappings
-    pair = HEVY_TO_GARMIN.get(hevy_name)
-    if pair is not None:
-        return (pair[0], pair[1], hevy_name)
     return (_UNKNOWN_CATEGORY, _UNKNOWN_SUBCATEGORY, hevy_name)
 
 
