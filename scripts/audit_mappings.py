@@ -103,6 +103,22 @@ def parse_comments() -> dict[str, str]:
     return {m.group("key"): m.group("cmt") for m in rx.finditer(src)}
 
 
+def find_duplicate_keys() -> list[tuple[str, int]]:
+    """Report exercises defined more than once in the table literal.
+
+    ``HEVY_TO_GARMIN`` is already deduplicated by the time it is importable —
+    Python keeps the last definition — so a repeated key is invisible to every
+    check that iterates the dict. Only the source text shows it, and the
+    consequence is silent: an exact mapping replaced by whatever was added
+    later under a different category heading (#275).
+    """
+    rx = re.compile(r'^\s{4}"((?:[^"\\]|\\.)*)":\s*\(\d+,\s*\d+\),', re.M)
+    counts: dict[str, int] = {}
+    for m in rx.finditer(MAPPER.read_text()):
+        counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+    return sorted((k, n) for k, n in counts.items() if n > 1)
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -110,9 +126,12 @@ def _norm(s: str) -> str:
 def audit_fit(cats: dict, names: dict, comments: dict) -> tuple:
     from hevy2garmin.mapper import HEVY_TO_GARMIN
 
-    bad_cat, bad_sub, mismatch = [], [], []
+    bad_cat, bad_sub, mismatch, generic = [], [], [], []
     for key, (cat, sub) in HEVY_TO_GARMIN.items():
         if cat == 65534:  # intentional UNKNOWN sentinel
+            continue
+        if sub == 65535:  # intentional "category, nothing more specific" sentinel
+            generic.append((key, cat, sub))
             continue
         cmt = comments.get(key, "")
         claimed = cmt.split("/", 1)[1].strip().split("(")[0].strip() if "/" in cmt else ""
@@ -126,7 +145,7 @@ def audit_fit(cats: dict, names: dict, comments: dict) -> tuple:
         real = subs[sub]
         if claimed and _norm(claimed) != _norm(real):
             mismatch.append((key, cat, sub, cats[cat], real, claimed))
-    return HEVY_TO_GARMIN, bad_cat, bad_sub, mismatch
+    return HEVY_TO_GARMIN, bad_cat, bad_sub, mismatch, generic
 
 
 def audit_hevy(mapper_keys: set[str]) -> tuple | None:
@@ -163,15 +182,23 @@ def main() -> int:
 
     prov, cats, names = load_catalog()
     comments = parse_comments()
-    mapping, bad_cat, bad_sub, mismatch = audit_fit(cats, names, comments)
+    mapping, bad_cat, bad_sub, mismatch, generic = audit_fit(cats, names, comments)
+    duplicates = find_duplicate_keys()
 
     total_names = sum(len(s) for s in names.values())
     print(f"FIT ground truth: {prov.get('source')} {prov.get('version')} "
           f"({len(cats)} categories, {total_names} names)")
     print(f"Mapper entries: {len(mapping)}")
+    print(f"  duplicate keys:      {len(duplicates)}")
     print(f"  invalid category:    {len(bad_cat)}")
     print(f"  invalid subcategory: {len(bad_sub)}")
     print(f"  comment mismatch:    {len(mismatch)}")
+    print(f"  generic (sentinel):  {len(generic)}  (intentional, not a problem)")
+
+    if duplicates:
+        print("\n== DUPLICATE KEYS (the later definition silently wins) ==")
+        for key, n in duplicates:
+            print(f"  {key!r}: defined {n} times")
 
     if bad_cat:
         print("\n== INVALID CATEGORY (renders wrong/blank in Garmin) ==")
