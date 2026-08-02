@@ -11,6 +11,11 @@ Run after Hevy adds new exercises:
 
     HEVY_API_KEY=<key> python scripts/gen_template_map.py
 
+Verify the committed file still matches ``HEVY_TO_GARMIN`` (no network, no API
+key — this is what CI runs):
+
+    python scripts/gen_template_map.py --check
+
 Only NON-custom (global) templates are included, since custom template ids are
 per-account and would not generalise.
 """
@@ -18,6 +23,7 @@ per-account and would not generalise.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -52,7 +58,52 @@ def fetch_templates(key: str) -> dict[str, str]:
     return out
 
 
+def check() -> int:
+    """Report entries whose pair no longer matches ``HEVY_TO_GARMIN``.
+
+    ``lookup_exercise`` resolves the English name first, so a stale generated
+    entry is invisible to an English-speaking user — but the template id is
+    what a non-English workout resolves through, so drift silently gives those
+    users the pre-fix pair. Regeneration needs the Hevy API; this check does
+    not, because each generated line carries its source title in a comment.
+
+    Only entries whose title is still in the table can be compared. A title
+    that has since been renamed or removed is reported separately: nothing can
+    verify it, and it keeps whatever pair it was generated with.
+    """
+    sys.path.insert(0, str(SRC))
+    from hevy2garmin.mapper import HEVY_TO_GARMIN
+
+    entry = re.compile(r'^    "(\w+)": \((\d+), (\d+)\),  # (.+)$', re.M)
+    drift: list[str] = []
+    orphans: list[str] = []
+    total = 0
+    for tid, cat, sub, title in entry.findall(OUT.read_text()):
+        total += 1
+        expected = HEVY_TO_GARMIN.get(title)
+        if expected is None:
+            orphans.append(f"{title} [{tid}]")
+        elif expected != (int(cat), int(sub)):
+            drift.append(f"  {title} [{tid}]: generated {(int(cat), int(sub))}, table has {expected}")
+
+    print(f"checked {total} generated entries against HEVY_TO_GARMIN")
+    if orphans:
+        print(f"note: {len(orphans)} entries whose title is no longer in the table "
+              f"(cannot be verified): {', '.join(orphans[:5])}"
+              + (" ..." if len(orphans) > 5 else ""))
+    if drift:
+        print(f"\nout of date ({len(drift)}):", file=sys.stderr)
+        print("\n".join(drift), file=sys.stderr)
+        print("\nRe-run with HEVY_API_KEY set, or update both files together.", file=sys.stderr)
+        return 1
+    print("up to date")
+    return 0
+
+
 def main() -> int:
+    if "--check" in sys.argv[1:]:
+        return check()
+
     key = os.environ.get("HEVY_API_KEY")
     if not key:
         print("Set HEVY_API_KEY", file=sys.stderr)
