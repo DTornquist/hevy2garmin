@@ -136,6 +136,33 @@ class TestSaveCustomMappingCloud:
         m._custom_mappings.clear()
 
 
+class TestGenericSubcategory:
+    """Subcategory 0 is a real exercise, not a "no specific exercise" marker.
+
+    FIT's unset value is 65535. An entry meant to say "this category, nothing
+    more specific" that uses 0 instead resolves to whatever exercise happens to
+    be first in that category — cardio/0 is BOB_AND_WEAVE_CIRCLE, so Swimming
+    uploaded to Garmin under that name.
+    """
+
+    def test_entries_documented_as_generic_use_the_sentinel(self) -> None:
+        import re
+
+        source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
+        table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
+        wrong = re.findall(
+            r'^\s{4}"([^"]+)":\s+\(\d+, 0\),\s+#.*generic.*$', table, re.M
+        )
+        assert not wrong, f"'generic' entries using subcategory 0 instead of 65535: {wrong}"
+
+    def test_swimming_is_not_a_boxing_drill(self) -> None:
+        from hevy2garmin.merge import _category_to_string, _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Swimming")
+        assert _category_to_string(cat) == "CARDIO"
+        assert _exercise_to_string(cat, sub) != "BOB_AND_WEAVE_CIRCLE"
+
+
 class TestValidCategories:
     """Bug B: some mappings used FIT categories (33-52) the installed fit_tool
     doesn't implement, so they silently fell back to TOTAL_BODY instead of their
