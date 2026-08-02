@@ -84,7 +84,8 @@ def upload_fit(
         fit_path: Path to the .fit file.
         workout_start: ISO-8601 start time for matching the uploaded activity.
         exclude_activity_ids: Activities that existed before the upload. These
-            must not be mistaken for the newly imported activity.
+            must not be mistaken for the newly imported activity — not even
+            when Garmin names one of them in the import result itself.
 
     Returns dict with upload_id and activity_id (if found).
     """
@@ -127,6 +128,22 @@ def upload_fit(
         logger.info("  Upload result: upload_id=%s activity_id=%s", upload_id, activity_id)
     else:
         logger.info("  Upload response: %s", str(resp)[:200])
+
+    # A pre-existing activity must never be taken for the new one, even when
+    # Garmin reports it as the import "success". Under the "replace" strategy
+    # the watch copy shares the workout's start time, so Garmin can answer the
+    # import with that id instead of creating a new activity — the caller then
+    # deletes the watch copy and renames an activity that is already gone
+    # (404). Drop the echoed id and fall through to the start-time lookup.
+    if activity_id is not None and exclude_activity_ids:
+        excluded = {str(x) for x in exclude_activity_ids}
+        if str(activity_id) in excluded:
+            logger.warning(
+                "  Import result returned excluded activity %s (pre-existing duplicate); "
+                "resolving the new activity by start time instead",
+                activity_id,
+            )
+            activity_id = None
 
     # Find the activity ID for renaming (retry with backoff if needed).
     # Only match by start time — never grab "most recent activity" because
