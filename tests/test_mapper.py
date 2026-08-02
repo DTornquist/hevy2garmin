@@ -136,6 +136,29 @@ class TestSaveCustomMappingCloud:
         m._custom_mappings.clear()
 
 
+class TestNoDuplicateKeys:
+    """A repeated key in the table literal is invisible: Python keeps the last
+    one, so an exact FIT mapping can be silently replaced by an approximation
+    added later under a different category heading."""
+
+    def test_table_has_no_repeated_keys(self) -> None:
+        import collections
+        import re
+
+        source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
+        table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
+        keys = re.findall(r'^\s{4}"([^"]+)":\s*\(', table, re.M)
+        repeated = [k for k, n in collections.Counter(keys).items() if n > 1]
+        assert not repeated, f"exercise defined more than once: {repeated}"
+
+    def test_overhead_dumbbell_lunge_is_a_lunge(self) -> None:
+        """It has a LUNGE mapping, so the later CARRY entry must not win."""
+        from hevy2garmin.merge import _category_to_string
+
+        cat, sub, _ = lookup_exercise("Overhead Dumbbell Lunge")
+        assert _category_to_string(cat) == "LUNGE", (cat, sub)
+
+
 class TestValidCategories:
     """Bug B: some mappings used FIT categories (33-52) the installed fit_tool
     doesn't implement, so they silently fell back to TOTAL_BODY instead of their
