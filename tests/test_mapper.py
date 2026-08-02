@@ -136,6 +136,22 @@ class TestSaveCustomMappingCloud:
         m._custom_mappings.clear()
 
 
+class TestPallofPress:
+    def test_hevy_spelling_resolves(self) -> None:
+        """Hevy's catalog spells it "Pallof" (one l), which had no entry."""
+        from hevy2garmin.merge import _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Cable Core Pallof Press")
+        assert _exercise_to_string(cat, sub) == "CABLE_CORE_PRESS"
+
+    def test_old_spelling_still_resolves(self) -> None:
+        """The previous misspelling stays mapped so older data keeps working."""
+        from hevy2garmin.merge import _exercise_to_string
+
+        cat, sub, _ = lookup_exercise("Cable Core Palloff Press")
+        assert _exercise_to_string(cat, sub) == "CABLE_CORE_PRESS"
+
+
 class TestValidCategories:
     """Bug B: some mappings used FIT categories (33-52) the installed fit_tool
     doesn't implement, so they silently fell back to TOTAL_BODY instead of their
