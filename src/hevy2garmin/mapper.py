@@ -48,7 +48,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Incline Chest Press (Machine)":            (0, 9),    # bench_press / incline_dumbbell_bench_press (closest machine)
     "Iso-Lateral Chest Press (Machine)":        (0, 6),    # bench_press / dumbbell_bench_press (closest)
     "Chest Press (Band)":                       (0, 1),    # bench_press / barbell_bench_press (closest)
-    "Chest Press (Machine)":                    (0, 6),    # bench_press / dumbbell_bench_press (closest machine press)
+    "Chest Press (Machine)":                    (0, 22),   # bench_press / smith_machine_bench_press (machine, not free-weight)
     "Dumbbell Squeeze Press":                   (0, 6),    # bench_press / dumbbell_bench_press (squeeze variant)
     "Hex Press (Dumbbell)":                     (0, 6),    # bench_press / dumbbell_bench_press (hex variant)
     "JM Press (Barbell)":                       (0, 4),    # bench_press / close_grip_barbell_bench_press (closest)
@@ -448,7 +448,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Fire Hydrants":                            (11, 5),   # hip_stability / fire_hydrant_kicks
     "Glute Kickback (Machine)":                 (11, 17),  # hip_stability / quadruped_hip_extension (closest)
     "Glute Kickback on Floor":                  (11, 17),  # hip_stability / quadruped_hip_extension
-    "Hip Abduction (Machine)":                  (11, 28),  # hip_stability / standing_hip_abduction
+    "Hip Abduction (Machine)":                  (11, 29),  # hip_stability / weighted_standing_hip_abduction (machine is loaded)
     "Hip Abduction (Cable)":                    (11, 27),  # hip_stability / standing_cable_hip_abduction
     "Hip Adduction (Machine)":                  (11, 25),  # hip_stability / standing_adduction
     "Hip Adduction (Cable)":                    (11, 25),  # hip_stability / standing_adduction (cable)

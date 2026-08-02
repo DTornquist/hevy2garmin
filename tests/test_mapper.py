@@ -289,3 +289,32 @@ class TestTemplateIdDoesNotOverrideTheTable:
         cat, sub, name = lookup_exercise("Agachamento Búlgaro", template_id=tid)
         assert (cat, sub) == TEMPLATE_TO_GARMIN[tid]
         assert name == "Agachamento Búlgaro"
+
+
+class TestGeneratedTemplateMapIsCurrent:
+    """`template_map.py` is generated from HEVY_TO_GARMIN and can go stale.
+
+    `lookup_exercise` resolves the English name before the template id, so a
+    stale generated entry is invisible to an English-speaking user. Non-English
+    workouts have no English name to match and resolve through the id, so drift
+    hands exactly those users the pre-fix pair — which is how the #273 fix
+    reached English names only.
+
+    Regenerating needs the Hevy API; this check does not, because every
+    generated line carries its source title in a comment.
+    """
+
+    def test_generated_map_matches_the_table(self) -> None:
+        import importlib.util
+
+        script = Path(__file__).parent.parent / "scripts" / "gen_template_map.py"
+        spec = importlib.util.spec_from_file_location("gen_template_map", script)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert module.check() == 0, (
+            "template_map.py is out of step with HEVY_TO_GARMIN — see the report "
+            "above. Re-run scripts/gen_template_map.py, or update both files in "
+            "the same commit."
+        )
