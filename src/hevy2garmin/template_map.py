@@ -65,7 +65,7 @@ TEMPLATE_TO_GARMIN: dict[str, tuple[int, int]] = {
     "78683336": (9, 2),  # Chest Fly (Machine)
     "720B0D70": (9, 2),  # Chest Fly (Suspension)
     "EAC7D9C5": (0, 1),  # Chest Press (Band)
-    "7EB3F7C3": (0, 6),  # Chest Press (Machine)
+    "7EB3F7C3": (0, 22),  # Chest Press (Machine)
     "914F3A96": (23, 2),  # Chest Supported Incline Row (Dumbbell)
     "B582299E": (9, 5),  # Chest Supported Reverse Fly (Dumbbell)
     "F21D5693": (14, 10),  # Chest Supported Y Raise (Dumbbell)
@@ -157,7 +157,7 @@ TEMPLATE_TO_GARMIN: dict[str, tuple[int, int]] = {
     "150E076B": (2, 0),  # High Knees
     "023947AB": (2, 0),  # HIIT
     "1C34A172": (32, 1),  # Hiking
-    "F4B4C6EE": (11, 28),  # Hip Abduction (Machine)
+    "F4B4C6EE": (11, 29),  # Hip Abduction (Machine)
     "8BEBFED6": (11, 25),  # Hip Adduction (Machine)
     "92B8C7E1": (10, 0),  # Hip Thrust
     "D57C2EC7": (10, 1),  # Hip Thrust (Barbell)
