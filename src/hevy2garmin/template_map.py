@@ -238,7 +238,7 @@ TEMPLATE_TO_GARMIN: dict[str, tuple[int, int]] = {
     "DBE341AA": (6, 83),  # Oblique Crunch
     "B140095E": (22, 38),  # One Arm Push Up
     "582ADA23": (7, 8),  # Overhead Curl (Cable)
-    "4C6721B9": (3, 4),  # Overhead Dumbbell Lunge
+    "4C6721B9": (17, 40),  # Overhead Dumbbell Lunge
     "54E60954": (14, 16),  # Overhead Plate Raise
     "7B8D84E8": (24, 14),  # Overhead Press (Barbell)
     "6AC96645": (24, 15),  # Overhead Press (Dumbbell)
