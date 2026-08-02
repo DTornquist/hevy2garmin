@@ -364,3 +364,87 @@ class TestSecurityHeaders:
         assert "strict-transport-security" not in {k.lower() for k in plain.headers.keys()}
         secure = client.get("/login", headers={"X-Forwarded-Proto": "https"})
         assert secure.headers.get("strict-transport-security")
+
+
+class TestGarminLoginEndpoints:
+    def test_login_requires_cookie(self, client_with_secret) -> None:
+        resp = client_with_secret.post("/api/garmin-login", json={"email": "e", "password": "p"})
+        assert resp.status_code == 401
+
+    def test_mfa_requires_cookie(self, client_with_secret) -> None:
+        resp = client_with_secret.post(
+            "/api/garmin-login-mfa", json={"session_id": "s", "code": "123456"}
+        )
+        assert resp.status_code == 401
+
+    def test_login_begin_success(self, client_with_secret) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "success", "display_name": "Jane"}):
+            resp = client_with_secret.post(
+                "/api/garmin-login",
+                json={"email": "e@x.com", "password": "pw"},
+                cookies={"h2g_auth": "test-secret-123"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "success", "display_name": "Jane"}
+
+    def test_login_begin_needs_mfa(self, client_with_secret) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "needs_mfa", "session_id": "sid-1"}):
+            resp = client_with_secret.post(
+                "/api/garmin-login",
+                json={"email": "e@x.com", "password": "pw"},
+                cookies={"h2g_auth": "test-secret-123"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "needs_mfa", "session_id": "sid-1"}
+
+    def test_login_missing_fields_returns_400(self, client_with_secret) -> None:
+        resp = client_with_secret.post(
+            "/api/garmin-login", json={}, cookies={"h2g_auth": "test-secret-123"}
+        )
+        assert resp.status_code == 400
+        assert resp.json()["status"] == "error"
+
+    def test_mfa_missing_fields_returns_400(self, client_with_secret) -> None:
+        resp = client_with_secret.post(
+            "/api/garmin-login-mfa", json={"session_id": "sid"},
+            cookies={"h2g_auth": "test-secret-123"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["status"] == "error"
+
+    def test_login_mfa_complete(self, client_with_secret) -> None:
+        with patch("hevy2garmin.garmin_login.complete",
+                   return_value={"status": "success", "display_name": "Jane"}) as comp:
+            resp = client_with_secret.post(
+                "/api/garmin-login-mfa",
+                json={"session_id": "sid-1", "code": "123456"},
+                cookies={"h2g_auth": "test-secret-123"},
+            )
+        comp.assert_called_once_with("sid-1", "123456")
+        assert resp.json()["status"] == "success"
+
+
+@pytest.fixture
+def client_direct_login():
+    """TestClient with the direct-login flag on (and no HEVY2GARMIN_SECRET).
+
+    The env patch is honored because _direct_garmin_login() is evaluated at
+    request time (inside the /setup route), not at module import — so the
+    cached server module doesn't need reloading.
+    """
+    with patch.dict(os.environ, {"H2G_DIRECT_GARMIN_LOGIN": "true"}, clear=False):
+        os.environ.pop("HEVY2GARMIN_SECRET", None)
+        from hevy2garmin.server import app
+        yield TestClient(app)
+
+
+class TestDirectLoginFlag:
+    def test_setup_renders_direct_flag_on(self, client_direct_login) -> None:
+        resp = client_direct_login.get("/setup")
+        assert "const DIRECT_LOGIN = true" in resp.text
+
+    def test_setup_renders_direct_flag_off(self, client_no_secret) -> None:
+        resp = client_no_secret.get("/setup")
+        assert "const DIRECT_LOGIN = false" in resp.text

@@ -62,3 +62,52 @@ class TestSyncDryRun:
     def test_since_flag(self) -> None:
         result = run_cli("sync", "--since", "2026-01-01", "--help")
         assert result.returncode == 0
+
+
+from hevy2garmin.cli import _garmin_interactive_login
+
+
+class TestGarminInteractiveLogin:
+    def test_clean_success(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "success", "display_name": "Jane"}):
+            _garmin_interactive_login("e@x.com", "pw")
+        assert "Authenticated as Jane" in capsys.readouterr().out
+
+    def test_mfa_flow(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "needs_mfa", "session_id": "sid-1"}), \
+             patch("hevy2garmin.garmin_login.complete",
+                   return_value={"status": "success", "display_name": "Jane"}) as comp, \
+             patch("builtins.input", return_value="123456"):
+            _garmin_interactive_login("e@x.com", "pw")
+        comp.assert_called_once_with("sid-1", "123456")
+        assert "Authenticated as Jane" in capsys.readouterr().out
+
+    def test_invalid_credentials_prints_and_returns(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "invalid_credentials", "message": "bad"}):
+            _garmin_interactive_login("e@x.com", "pw")
+        assert "email" in capsys.readouterr().out.lower()
+
+    def test_rate_limited(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "rate_limited", "message": "429"}):
+            _garmin_interactive_login("e@x.com", "pw")
+        assert "rate-limit" in capsys.readouterr().out.lower()
+
+    def test_mfa_failed(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "needs_mfa", "session_id": "sid-1"}), \
+             patch("hevy2garmin.garmin_login.complete",
+                   return_value={"status": "mfa_failed", "message": "Code rejected, try again"}), \
+             patch("builtins.input", return_value="000000"):
+            _garmin_interactive_login("e@x.com", "pw")
+        assert "rejected" in capsys.readouterr().out.lower()
+
+    def test_mfa_eof_is_handled(self, capsys) -> None:
+        with patch("hevy2garmin.garmin_login.begin",
+                   return_value={"status": "needs_mfa", "session_id": "sid-1"}), \
+             patch("builtins.input", side_effect=EOFError):
+            _garmin_interactive_login("e@x.com", "pw")  # must not raise
+        assert "no input" in capsys.readouterr().out.lower()

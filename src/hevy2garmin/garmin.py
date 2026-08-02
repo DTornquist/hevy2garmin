@@ -33,6 +33,22 @@ def get_client(
     Uses DBTokenStore when DATABASE_URL is set (cloud/Vercel),
     falls back to file-based tokens (local/Docker).
     """
+    auth = GarminAuth(**auth_kwargs(email, password, token_dir))
+    return auth.login()
+
+
+def auth_kwargs(
+    email: str | None = None,
+    password: str | None = None,
+    token_dir: str = "~/.garminconnect",
+) -> dict:
+    """Build the GarminAuth kwargs selecting the right token store.
+
+    Every path that authenticates with Garmin must agree on where tokens
+    live, or one writes a store the other never reads and the account looks
+    permanently un-authenticated. Shared by get_client and the dashboard's
+    direct login so the choice is made in exactly one place.
+    """
     from hevy2garmin.db import get_database_url
     database_url = get_database_url()
 
@@ -44,9 +60,7 @@ def get_client(
         kwargs["token_dir"] = "/tmp/.garminconnect"
     else:
         kwargs["token_dir"] = token_dir
-
-    auth = GarminAuth(**kwargs)
-    return auth.login()
+    return kwargs
 
 
 def _sanitize_activity_id(raw: object) -> int | None:

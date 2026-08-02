@@ -15,10 +15,11 @@ from typing import Any
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 
-from hevy2garmin import db, login_ratelimit, __version__
+from hevy2garmin import db, garmin_login, login_ratelimit, __version__
 from hevy2garmin.db_interface import NoWritableDatabaseError
 from hevy2garmin.auth import (
     auth_enabled, verify_session, sign_session, check_password, SESSION_COOKIE, session_ttl,
@@ -430,7 +431,8 @@ async def check_setup(request: Request, call_next):
             return Response("Unauthorized", status_code=401)
 
     # Setup page and sync endpoints: skip the "is configured?" redirect
-    if path in ("/login", "/setup", "/api/sync-one", "/api/cron/sync", "/api/setup-actions", "/api/garmin-ticket"):
+    if path in ("/login", "/setup", "/api/sync-one", "/api/cron/sync", "/api/setup-actions",
+                "/api/garmin-ticket", "/api/garmin-login", "/api/garmin-login-mfa"):
         response = await call_next(request)
     else:
         # Redirect to setup if not configured
@@ -656,6 +658,16 @@ async def dashboard(request: Request):
 
 
 
+def _direct_garmin_login() -> bool:
+    """Whether the dashboard collects Garmin credentials itself.
+
+    Off by default: the hosted deployment hands the login to the exchange
+    worker so the app never sees a Garmin password. Self-hosted installs can
+    opt in, keeping the credentials on their own machine.
+    """
+    return os.environ.get("H2G_DIRECT_GARMIN_LOGIN", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
     garmin_cooldown = 0
@@ -667,7 +679,8 @@ async def setup_page(request: Request):
     except Exception:
         pass
     return _render("setup.html", config=load_config(), is_cloud=bool(db.get_database_url()),
-                   garmin_cooldown=garmin_cooldown, garmin_cooldown_str=garmin_cooldown_str)
+                   garmin_cooldown=garmin_cooldown, garmin_cooldown_str=garmin_cooldown_str,
+                   direct_garmin_login=_direct_garmin_login())
 
 
 @app.post("/setup")
@@ -876,6 +889,55 @@ async def api_garmin_rate_limited(request: Request):
     except Exception as e:
         logger.warning("Could not record rate-limit: %s", e)
         return HTMLResponse(_json.dumps({"cooldown_seconds": 0}))
+
+
+@app.post("/api/garmin-login")
+async def garmin_login_begin(request: Request):
+    """Direct (self-hosted) Garmin login, step 1. The password never leaves the host."""
+    from fastapi.responses import JSONResponse
+
+    body = await request.json()
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    if not email or not password:
+        return JSONResponse({"status": "error", "message": "Email and password required"}, status_code=400)
+
+    # Same limiter the dashboard login uses. Garmin rate-limits the account
+    # itself, so hammering this endpoint locks the user out upstream — worth
+    # throttling locally first, especially on an open self-host.
+    key = f"garmin-login:{client_ip(request)}"
+    try:
+        store = db.get_db()
+    except Exception:
+        store = None  # DB unavailable → skip the limiter, never block setup on an outage
+    remaining = login_ratelimit.lockout_remaining(store, key) if store else 0
+    if remaining > 0:
+        return JSONResponse(
+            {"status": "error", "message": f"Too many attempts. Try again in {format_cooldown(remaining)}."},
+            status_code=429,
+        )
+
+    result = await run_in_threadpool(garmin_login.begin, email, password)
+    if store:
+        if result.get("status") in ("success", "needs_mfa"):
+            login_ratelimit.clear_failures(store, key)
+        else:
+            login_ratelimit.record_failure(store, key)
+    return JSONResponse(result)
+
+
+@app.post("/api/garmin-login-mfa")
+async def garmin_login_mfa(request: Request):
+    """Direct (self-hosted) Garmin login, step 2 — submit the MFA code."""
+    from fastapi.responses import JSONResponse
+
+    body = await request.json()
+    session_id = (body.get("session_id") or "").strip()
+    code = (body.get("code") or "").strip()
+    if not session_id or not code:
+        return JSONResponse({"status": "error", "message": "session_id and code required"}, status_code=400)
+    result = await run_in_threadpool(garmin_login.complete, session_id, code)
+    return JSONResponse(result)
 
 
 @app.get("/workouts", response_class=HTMLResponse)

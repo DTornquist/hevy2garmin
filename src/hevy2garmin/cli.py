@@ -41,6 +41,34 @@ def _require_config(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _garmin_interactive_login(email: str, password: str) -> None:
+    """Two-step Garmin login for the terminal; prints status, never raises."""
+    from hevy2garmin import garmin_login
+
+    result = garmin_login.begin(email, password)
+    if result["status"] == "needs_mfa":
+        try:
+            code = input("  Garmin sent a verification code — enter it: ").strip()
+        except EOFError:
+            print("✗ No input available — cannot complete MFA.")
+            return
+        result = garmin_login.complete(result["session_id"], code)
+
+    status = result["status"]
+    if status == "success":
+        print(f"✓ Authenticated as {result.get('display_name') or 'Garmin'}")
+    elif status == "invalid_credentials":
+        print("✗ Failed: check your Garmin email and password.")
+    elif status == "rate_limited":
+        print("✗ Garmin is rate-limiting logins from this server. Try again in 1–2 h.")
+    elif status == "mfa_failed":
+        print("✗ The verification code was rejected.")
+    elif status == "session_expired":
+        print("✗ Login session expired — run init again.")  # parity with HTTP surface; unreachable in CLI
+    else:
+        print(f"✗ Failed: {result.get('message', 'unknown error')}")
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Interactive setup wizard."""
     print("hevy2garmin setup\n")
@@ -76,16 +104,9 @@ def cmd_init(args: argparse.Namespace) -> None:
     if email:
         pw = getpass.getpass("Garmin password (enter to skip if tokens exist): ")
         if pw:
-            # Test login
-            print("  Checking Garmin login...", end=" ", flush=True)
-            try:
-                from garmin_auth import GarminAuth
-                auth = GarminAuth(email=email, password=pw)
-                client = auth.login()
-                print(f"✓ Authenticated as {client.display_name}")
-            except Exception as e:
-                print(f"✗ Failed: {e}")
-                print("  You can fix this later. Continuing setup...")
+            print("  Checking Garmin login...")
+            _garmin_interactive_login(email, pw)
+            # Login failures are non-fatal — tokens can be set up later.
 
     # User profile
     print("\nUser profile (for calorie estimation):")

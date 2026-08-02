@@ -1,0 +1,27 @@
+# The build context is only pyproject.toml, README.md and src/ — everything
+# else just slows the build down and can bloat the layer cache.
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests
+docs
+scripts
+typescript
+universal
+worker
+worker-di
+api
+node_modules
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+*.fit
+*.db
