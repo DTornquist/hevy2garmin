@@ -709,25 +709,36 @@ def lookup_exercise(hevy_name: str, template_id: str | None = None) -> tuple[int
 
     Resolution order:
       1. Custom user mapping, keyed by the user's own exercise name.
-      2. Hevy ``exercise_template_id``, which is the same regardless of the
-         user's Hevy language, so non-English exercises map automatically (#173).
-      3. The built-in English-name table.
+      2. The built-in English-name table.
+      3. Hevy ``exercise_template_id``, which is the same regardless of the
+         user's Hevy language, so non-English exercises still map (#173).
+
+    The table is consulted before the template id even though the template id
+    is the more precise key. ``TEMPLATE_TO_GARMIN`` is generated *from* this
+    table by ``scripts/gen_template_map.py`` and is only regenerated on
+    demand, so between regenerations it is a stale copy — and when it came
+    first, every correction made here was silently reverted for any workout
+    that carried a template id, which is all of them from the Hevy API. Its
+    job is to cover names this table does not have (a non-English Hevy
+    locale), so it belongs after it, not before.
+
     Returns sentinel category ``65534`` if not found anywhere.
     """
     _ensure_custom_loaded()
-    # Custom mappings take priority
+    # 1. Custom mappings take priority.
     if hevy_name in _custom_mappings:
         cat, subcat = _custom_mappings[hevy_name]
         return (cat, subcat, hevy_name)
-    # Language-independent template-id match
+    # 2. Built-in English-name table — hand-maintained and covered by tests.
+    pair = HEVY_TO_GARMIN.get(hevy_name)
+    if pair is not None:
+        return (pair[0], pair[1], hevy_name)
+    # 3. Language-independent template-id match (#173), for names the English
+    #    table does not carry.
     if template_id:
         pair = TEMPLATE_TO_GARMIN.get(template_id)
         if pair is not None:
             return (pair[0], pair[1], hevy_name)
-    # Built-in English-name mappings
-    pair = HEVY_TO_GARMIN.get(hevy_name)
-    if pair is not None:
-        return (pair[0], pair[1], hevy_name)
     return (_UNKNOWN_CATEGORY, _UNKNOWN_SUBCATEGORY, hevy_name)
 
 
