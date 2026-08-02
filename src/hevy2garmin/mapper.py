@@ -374,6 +374,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Split Squat (Dumbbell)":                   (17, 28),  # lunge / dumbbell_split_squat
     "Walking Lunge":                            (17, 78),  # lunge / walking_lunge
     "Walking Lunge (Dumbbell)":                 (17, 77),  # lunge / walking_dumbbell_lunge
+    "Walking Lunge (Sandbag)":                  (17, 79),  # lunge / weighted_walking_lunge
 
     # ======================================================================= #
     #  LEGS – Deadlift (category 8)
@@ -567,12 +568,14 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     # ======================================================================= #
     "Burpee":                                   (29, 0),   # total_body / burpee
     "Burpee Over the Bar":                      (29, 0),   # total_body / burpee (over bar variant)
+    "Burpee Broad Jumps":                       (29, 0),   # total_body / burpee (broad-jump variant)
 
     # ======================================================================= #
     #  CARRY (category 3)
     # ======================================================================= #
     "Farmers Walk":                             (3, 1),    # carry / farmers_walk
     "Suitcase Carry (Dumbbell)":                (3, 1),    # carry / farmers_walk (single-arm variant)
+    "Sled Pull":                                (3, 65535), # carry / generic (no sled exercise in FIT)
 
     # ======================================================================= #
     #  WARM UP (category 31)
