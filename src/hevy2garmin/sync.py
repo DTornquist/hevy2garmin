@@ -742,6 +742,14 @@ def sync(
             'Add custom mappings: hevy2garmin map "Exercise Name" --category N --subcategory N'
         )
 
+    # One-line run summary, so the container log shows the outcome even when
+    # nothing synced — a silent run is indistinguishable from a dead one.
+    logger.info(
+        "Sync run complete: %d synced, %d skipped, %d failed, %d deferred, %d processing (of %d fetched)",
+        stats["synced"], stats["skipped"], stats["failed"],
+        stats["deferred"], stats["processing"], stats["total"],
+    )
+
     # Log-only duplicate scan (best-effort; never breaks a sync).
     if not dry_run and garmin_client:
         try:
