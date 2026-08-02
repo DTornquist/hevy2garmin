@@ -69,7 +69,12 @@ _store = _PendingStore()
 def begin(email: str, password: str) -> dict:
     """Start a Garmin login. Returns a status dict; never raises for auth errors."""
     try:
-        auth = GarminAuth(email=email, password=password, return_on_mfa=True)
+        from hevy2garmin.garmin import auth_kwargs
+
+        # Same store selection as get_client — a direct login that wrote to a
+        # different store than sync reads from would look like it never
+        # happened (#296 review).
+        auth = GarminAuth(**auth_kwargs(email, password), return_on_mfa=True)
         result = auth.login()
     except GarminConnectAuthenticationError as e:
         return {"status": "invalid_credentials", "message": str(e)[:200]}

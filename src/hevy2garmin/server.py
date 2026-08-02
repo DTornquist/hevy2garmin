@@ -901,7 +901,28 @@ async def garmin_login_begin(request: Request):
     password = body.get("password") or ""
     if not email or not password:
         return JSONResponse({"status": "error", "message": "Email and password required"}, status_code=400)
+
+    # Same limiter the dashboard login uses. Garmin rate-limits the account
+    # itself, so hammering this endpoint locks the user out upstream — worth
+    # throttling locally first, especially on an open self-host.
+    key = f"garmin-login:{client_ip(request)}"
+    try:
+        store = db.get_db()
+    except Exception:
+        store = None  # DB unavailable → skip the limiter, never block setup on an outage
+    remaining = login_ratelimit.lockout_remaining(store, key) if store else 0
+    if remaining > 0:
+        return JSONResponse(
+            {"status": "error", "message": f"Too many attempts. Try again in {format_cooldown(remaining)}."},
+            status_code=429,
+        )
+
     result = await run_in_threadpool(garmin_login.begin, email, password)
+    if store:
+        if result.get("status") in ("success", "needs_mfa"):
+            login_ratelimit.clear_failures(store, key)
+        else:
+            login_ratelimit.record_failure(store, key)
     return JSONResponse(result)
 
 

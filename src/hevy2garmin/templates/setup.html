@@ -211,6 +211,13 @@ async function handleGarminLoginResponse(data) {
         // Hide MFA row if it was shown
         mfaRow.style.display = 'none';
         garminMfaSessionId = null;
+        if (DIRECT_LOGIN) {
+            // The login ran on this host, so the token store is already written.
+            // There are no DI tokens in the response to relay — posting them
+            // anyway sends {"tokens":{}} and gets a spurious "Invalid tokens".
+            result.innerHTML = '<span style="color: var(--accent);">&#10003; Connected to Garmin</span>';
+            return;
+        }
         // Persist tokens on our server
         const storeResp = await fetch('/api/garmin-ticket', {
             method: 'POST',
