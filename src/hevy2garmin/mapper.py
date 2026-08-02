@@ -558,7 +558,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     # ======================================================================= #
     #  WARM UP (category 31)
     # ======================================================================= #
-    "Warm Up":                                  (31, 0),   # warm_up / generic warm up
+    "Warm Up":                                  (31, 65535),  # warm_up / generic warm up
 
     # ======================================================================= #
     #  FLEXIBILITY / STABILITY – mapped to known FIT categories
@@ -566,7 +566,7 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     "Bird Dog":                                 (11, 1),   # hip_stability / dead_bug (closest quadruped stability)
     "Dead Bug":                                 (11, 1),   # hip_stability / dead_bug
     "Dead Hang":                                (21, 38),  # pull_up / pull_up (hang variant – grip/lat endurance)
-    "Downward Dog":                             (31, 0),   # warm_up / generic (yoga pose)
+    "Downward Dog":                             (31, 65535),  # warm_up / generic (yoga pose)
     "Front Lever Hold":                         (21, 38),  # pull_up / pull_up (front lever)
     "Front Lever Raise":                        (21, 38),  # pull_up / pull_up (front lever)
     "Handstand Hold":                           (22, 25),  # push_up / handstand_push_up (hold variant)
@@ -589,28 +589,28 @@ HEVY_TO_GARMIN: dict[str, tuple[int, int]] = {
     # ======================================================================= #
     #  CARDIO / MACHINES — uses newer FIT SDK categories (33+) where available
     # ======================================================================= #
-    "Aerobics":                                 (2, 0),    # cardio / generic
+    "Aerobics":                                 (2, 65535),   # cardio / generic
     "Air Bike":                                 (2, 65535),   # CARDIO / generic
     "Battle Ropes":                             (2, 65535),   # CARDIO / generic
     "Boxing":                                   (2, 65535),   # CARDIO / generic
-    "Climbing":                                 (2, 0),    # cardio / generic
+    "Climbing":                                 (2, 65535),   # cardio / generic
     "Cycling":                                  (2, 65535),   # CARDIO / generic
     "Elliptical Trainer":                       (2, 65535),   # CARDIO / generic
-    "HIIT":                                     (2, 0),    # cardio / generic
+    "HIIT":                                     (2, 65535),   # cardio / generic
     "Hiking":                                   (32, 1),   # run / walk (hiking = walking)
     "Jump Rope":                                (2, 6),    # cardio / jump_rope
     "Jumping Jack":                             (2, 12),   # cardio / jumping_jacks
-    "Pilates":                                  (2, 0),    # cardio / generic
+    "Pilates":                                  (2, 65535),   # cardio / generic
     "Rowing Machine":                           (2, 65535),   # CARDIO / generic
-    "Skating":                                  (2, 0),    # cardio / generic
-    "Skiing":                                   (2, 0),    # cardio / generic
-    "Snowboarding":                             (2, 0),    # cardio / generic
+    "Skating":                                  (2, 65535),   # cardio / generic
+    "Skiing":                                   (2, 65535),   # cardio / generic
+    "Snowboarding":                             (2, 65535),   # cardio / generic
     "Spinning":                                 (2, 65535),   # CARDIO / generic
-    "Stretching":                               (31, 0),   # warm_up / generic (stretching)
-    "Swimming":                                 (2, 0),    # cardio / generic
+    "Stretching":                               (31, 65535),  # warm_up / generic (stretching)
+    "Swimming":                                 (2, 65535),   # cardio / generic
     "Treadmill":                                (2, 65535),   # CARDIO / generic
     "Yoga":                                     (29, 65535),   # TOTAL_BODY / generic (not a Garmin strength exercise)
-    "High Knees":                               (2, 0),    # cardio / generic
+    "High Knees":                               (2, 65535),   # cardio / generic
     "Sprints":                                  (32, 3),   # run / sprint
     "Cable Pull Through":                       (10, 11),  # hip_raise / hip_raise (cable pull-through = hip hinge)
 
