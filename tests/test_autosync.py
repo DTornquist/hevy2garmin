@@ -109,7 +109,7 @@ class TestCronGraceDeferral:
             patch("hevy2garmin.sync._workout_within_grace", return_value=True),
             patch("hevy2garmin.sync.sync_one_workout") as sync_one,
         ):
-            response = asyncio.run(server._do_sync_one(MagicMock(), respect_grace=True))
+            response = asyncio.run(server._do_sync_one(respect_grace=True))
 
         assert json.loads(response.body) == {
             "synced": 0,
