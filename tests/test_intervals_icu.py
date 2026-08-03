@@ -108,6 +108,36 @@ def test_delete_failure_never_raises(icu_env):
         assert try_delete_icu_activity(999, START) is False
 
 
+@pytest.mark.parametrize(
+    "body", [{"error": "nope"}, "a string", 42, None], ids=["dict", "str", "int", "null"]
+)
+def test_non_list_200_body_never_raises(icu_env, body):
+    """A 200 whose body is not a list must not escape into the sync.
+
+    The match loop runs outside the request try/except, so an unexpected shape
+    used to raise from here (a dict iterates to str keys → AttributeError on
+    .get; an int → TypeError). This helper sits inside finalize_pending before
+    next_step="commit", so a raise reverts to phase="finalizing", retries the
+    delete on the already-deleted watch id, and after the retry cap files a
+    fully-successful merge as needs_review.
+    """
+    with patch("hevy2garmin.intervals_icu.requests") as req:
+        req.get.return_value = _resp(json_data=body)
+        assert try_delete_icu_activity(999, START) is False
+        req.delete.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "workout_start", [1773763200, {"start_time": START}, [START], None], ids=["int", "dict", "list", "none"]
+)
+def test_non_string_workout_start_never_raises(icu_env, workout_start):
+    """A non-str start has no .replace — AttributeError, not ValueError/TypeError."""
+    with patch("hevy2garmin.intervals_icu.requests") as req:
+        assert try_delete_icu_activity(999, workout_start) is False
+        req.get.assert_not_called()
+        req.delete.assert_not_called()
+
+
 def test_zero_icu_id_is_deleted(icu_env):
     # An ICU activity id of 0 is valid and must be deleted, not treated as "not found".
     with patch("hevy2garmin.intervals_icu.requests") as req:

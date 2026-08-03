@@ -45,7 +45,9 @@ def try_delete_icu_activity(garmin_activity_id: int, workout_start: str) -> bool
         start = datetime.fromisoformat(workout_start.replace("Z", "+00:00"))
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
+        # AttributeError too: a non-str workout_start has no .replace, and this
+        # helper promises never to raise into the sync finalize path.
         logger.warning("ICU cleanup: invalid workout_start %r", workout_start)
         return False
 
@@ -61,6 +63,13 @@ def try_delete_icu_activity(garmin_activity_id: int, workout_start: str) -> bool
         )
         resp.raise_for_status()
         activities = resp.json()
+        # Shape-check inside the try: a 200 carrying a dict or a string would
+        # otherwise blow up in the loop below, which sits outside it.
+        if not isinstance(activities, list):
+            logger.warning(
+                "ICU cleanup: unexpected response type %s", type(activities).__name__
+            )
+            return False
     except Exception as e:
         logger.warning("ICU cleanup: failed to list activities: %s", e)
         return False
