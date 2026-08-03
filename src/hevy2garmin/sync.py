@@ -68,7 +68,7 @@ def _cache_routines_total(store: Any, count: int) -> None:
 class SyncOneResult:
     """Outcome of syncing a single Hevy workout."""
 
-    status: str  # "synced" | "dry_run" | "deferred" | "processing" | "needs_review" | "failed"
+    status: str  # "synced" | "dry_run" | "deferred" | "merge_pending" | "processing" | "needs_review" | "failed"
     activity_id: int | None = None
     sync_method: str = "upload"
     merged: bool = False
@@ -288,12 +288,18 @@ def sync_one_workout(
     dry_run: bool = False,
     force_upload: bool = False,
     respect_grace: bool = False,
+    merge_only: bool = False,
     database: Any | None = None,
 ) -> SyncOneResult:
     """Sync one Hevy workout to Garmin (merge, FIT upload, or dry-run).
 
     When ``respect_grace`` is True (autosync/cron), too-new workouts return
     ``status="deferred"`` so a watch activity can land before we upload.
+
+    When ``merge_only`` is True (webhook staged retry), a merge attempt that
+    does not land returns ``status="merge_pending"`` instead of falling back
+    to a plain FIT upload, so a later attempt can still merge once the watch
+    activity has reached Garmin Connect.
 
     Raises on FIT generation / upload failures so callers can map errors.
     """
@@ -375,6 +381,17 @@ def sync_one_workout(
         merge_forced_fresh = merge_result.force_fresh_upload
         merge_delete_id = merge_result.delete_after_upload
         merge_fallback = True
+
+        # merge_only: the caller (the webhook retry loop) wants a merge or
+        # nothing. Don't fall back to a plain FIT upload — leave the workout
+        # unsynced so the next attempt can merge once the watch activity has
+        # had more time to reach Garmin Connect.
+        if merge_only and not dry_run:
+            logger.info(
+                "  merge_only: no mergeable Garmin watch activity yet for '%s', will retry",
+                title,
+            )
+            return SyncOneResult(status="merge_pending", merge_fallback=True)
     else:
         merge_fallback = False
 
