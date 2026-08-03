@@ -155,7 +155,7 @@ async function garminConnect() {
     btn.disabled = true;
     result.innerHTML = '<span style="color: var(--text-muted);">Connecting to Garmin...</span>';
     try {
-        const url = DIRECT_LOGIN ? '/api/garmin-login' : (GARMIN_WORKER_BASE + '/login');
+        const url = DIRECT_LOGIN ? (window.APP_PREFIX + '/api/garmin-login') : (GARMIN_WORKER_BASE + '/login');
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -185,7 +185,7 @@ async function garminSubmitMfa() {
     btn.disabled = true;
     result.innerHTML = '<span style="color: var(--text-muted);">Verifying code...</span>';
     try {
-        const url = DIRECT_LOGIN ? '/api/garmin-login-mfa' : (GARMIN_WORKER_BASE + '/login-mfa');
+        const url = DIRECT_LOGIN ? (window.APP_PREFIX + '/api/garmin-login-mfa') : (GARMIN_WORKER_BASE + '/login-mfa');
         const body = DIRECT_LOGIN
             ? { session_id: garminMfaSessionId, code: code }
             : { session_id: garminMfaSessionId, mfa_code: code };
@@ -219,7 +219,7 @@ async function handleGarminLoginResponse(data) {
             return;
         }
         // Persist tokens on our server
-        const storeResp = await fetch('/api/garmin-ticket', {
+        const storeResp = await fetch(window.APP_PREFIX + '/api/garmin-ticket', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tokens: {
@@ -260,7 +260,7 @@ async function handleGarminLoginResponse(data) {
     if (data.status === 'rate_limited') {
         // Record the cooldown server-side so the dashboard can display it,
         // then disable the Connect button so the user can't retry and reset Garmin's timer.
-        fetch('/api/garmin-rate-limited', { method: 'POST' }).catch(function() {});
+        fetch(window.APP_PREFIX + '/api/garmin-rate-limited', { method: 'POST' }).catch(function() {});
         var connectBtn = document.getElementById('garmin_connect_btn');
         if (connectBtn) { connectBtn.disabled = true; }
         result.innerHTML = '<span style="color: var(--red);">&#10007; Garmin rate-limited this account on their side (separate from your password, your Garmin app still works). It clears on its own, usually within a few hours. Repeated retries just reset the timer, so leave it a while and try once more.</span>';
@@ -346,7 +346,7 @@ async function exchangeTicket() {
             return;
         }
         // Step 2: Store tokens on our server (garmin-auth >= 0.3.0 single-file DI format)
-        const storeResp = await fetch('/api/garmin-ticket', {
+        const storeResp = await fetch(window.APP_PREFIX + '/api/garmin-ticket', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tokens: {
@@ -362,7 +362,7 @@ async function exchangeTicket() {
                 + 'If your first sync fails with an upload error, go to '
                 + '<a href="https://connect.garmin.com/modern/settings" target="_blank" style="color: var(--accent);">Garmin Connect Settings</a>'
                 + ' > Data > enable <strong>Device Upload</strong>. This is a one-time requirement for some accounts.</p>';
-            setTimeout(function() { window.location.href = '/'; }, 5000);
+            setTimeout(function() { window.location.href = (window.APP_PREFIX || '') + '/'; }, 5000);
         } else {
             result.innerHTML = '<span style="font-size: 12px; color: var(--red);">&#10007; ' + (storeData.error || 'Failed to save tokens') + '</span>';
         }

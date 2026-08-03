@@ -363,7 +363,32 @@ Your Hevy API key stays local either way.
 
 Put the dashboard behind nginx, Caddy or Traefik on a subdomain, terminate TLS there, and keep the container bound to `127.0.0.1`. **Set `H2G_PASSWORD` before exposing it** — see [Securing the dashboard](#securing-the-dashboard).
 
-Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works. Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) is not fully supported yet: the templates build some URLs in JavaScript against the origin root, so those requests escape the prefix.
+Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works with no extra configuration.
+
+Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) works too. It needs two things: the proxy tells the app which sub-path it is mounted at, and you set `H2G_TRUST_FORWARDED_PREFIX=true` so the app believes it.
+
+```nginx
+location /hevy2garmin/ {
+    proxy_pass http://127.0.0.1:8123/;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /hevy2garmin;
+}
+```
+
+**The opt-in is not busywork.** Any client can send `X-Forwarded-Prefix`, and every URL on the page is built from it — the login form's `action`, the Garmin token POST, redirect targets. On an instance that is *not* behind a prefix-setting proxy, believing the header would let a caller re-point those at their own host. So the header is ignored unless you turn this on, and even then only a plain absolute path is accepted (no `//host`, no scheme, no quotes or angle brackets); anything else is treated as no prefix and the app serves from the root. **Your proxy must set the header itself rather than passing a client-supplied one through.**
+
+Caddy equivalent (`header_up` replaces any incoming value, which is what you want):
+
+```caddyfile
+handle_path /hevy2garmin/* {
+    reverse_proxy 127.0.0.1:8123 {
+        header_up X-Forwarded-Prefix /hevy2garmin
+    }
+}
+```
+
+The app then emits every link, asset, form action, htmx call, redirect and JavaScript-built API URL under that prefix. The proxy does **not** need to rewrite response bodies. Without the header nothing changes, so a root install and the Vercel deploy are unaffected.
 
 ### Keeping it in sync
 
@@ -388,6 +413,19 @@ Every attempt but the last is merge-only; only the final one falls back to a pla
 **On serverless this staging cannot run**, because the function is frozen as soon as it responds and Python on Vercel has no `waitUntil`. The endpoint detects that and does the only safe thing instead: with the watch merge on it defers to the scheduled cron (and logs that it did); with the watch merge off there is nothing to wait for, so it syncs inline — which on Vercel's Hobby plan replaces a once-a-day cron with a sync per workout.
 
 > One caveat for that last case: an inline sync can take longer than Hevy's few-second timeout, and Hevy then retries. On serverless the retry is a *separate process*, so the in-process sync lock cannot serialize the two, and the same workout could upload twice. It only applies with the watch merge off (not the default) on a serverless host; if that is your setup, prefer leaving the webhook unconfigured and relying on cron.
+
+### Removing duplicates from intervals.icu
+
+The `replace` watch strategy deletes the watch recording from Garmin once the named activity is uploaded, so Garmin ends up with one activity. Garmin deletions do not propagate, though: if you also sync Garmin to [intervals.icu](https://intervals.icu), the copy it already pulled stays there, and every merged workout leaves a duplicate behind.
+
+Set both of these and hevy2garmin deletes it there as well, matched on the Garmin activity id:
+
+```
+INTERVALS_API_KEY=
+INTERVALS_ATHLETE_ID=
+```
+
+Entirely opt-in — with either one missing the step is skipped. It also never fails a sync: intervals.icu being down or slow is logged and ignored, because the Garmin upload has already succeeded by that point.
 
 ### Running as a non-root user
 

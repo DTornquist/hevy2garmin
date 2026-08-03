@@ -142,6 +142,15 @@ def finalize_pending(store, client, pending: dict) -> SyncOneResult:
                     phase = "needs_review" if attempts >= 3 else "finalizing"
                     store.update_pending(wid, phase=phase, next_step="delete", delete_attempt_count=attempts, last_error=str(exc)[:1000])
                     return SyncOneResult(status="needs_review" if phase == "needs_review" else "processing", activity_id=activity_id)
+                # Remove it from intervals.icu too, so the deleted watch copy
+                # doesn't linger there as a duplicate of the named activity
+                # that replaces it. No-op unless ICU credentials are set, and
+                # never raises — a failure here must not fail the sync.
+                workout_start = (payload.get("workout") or {}).get("start_time", "")
+                if workout_start:
+                    from hevy2garmin.intervals_icu import try_delete_icu_activity
+
+                    try_delete_icu_activity(int(watch_id), workout_start)
                 step = "commit"
                 store.update_pending(wid, next_step=step, last_error=None)
         _complete(store, wid, payload, activity_id)
