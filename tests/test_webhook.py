@@ -55,6 +55,83 @@ class TestWebhookEndpoint:
         assert resp.status_code == 200
 
 
+class TestWebhookAuthFailsClosed:
+    """No CRON_SECRET must mean unavailable, not unauthenticated.
+
+    /api/cron/webhook is internet-facing (Hevy calls it) and is exempt from the
+    dashboard cookie/CSRF middleware, so an `if secret:` guard that skips the
+    check when the secret is unset leaves an anonymous sync trigger exposed —
+    including on an instance whose owner did set a dashboard password.
+    """
+
+    def test_unset_cron_secret_refuses_instead_of_accepting(self) -> None:
+        with patch.dict(os.environ, {"HEVY2GARMIN_SECRET": "dash-password"}):
+            os.environ.pop("CRON_SECRET", None)
+            os.environ.pop("VERCEL", None)
+            from hevy2garmin.server import app
+
+            with patch("hevy2garmin.server._webhook_sync", new_callable=AsyncMock) as worker:
+                resp = TestClient(app).post("/api/cron/webhook")
+            assert resp.status_code == 503
+            assert "CRON_SECRET" in resp.json()["error"]
+            worker.assert_not_called(), "no sync may be scheduled by an unauthenticated caller"
+
+    def test_a_near_miss_token_is_rejected(self, client_with_cron_secret) -> None:
+        for bad in ("Bearer cron-12", "Bearer cron-1234", "cron-123", "Basic cron-123", ""):
+            resp = client_with_cron_secret.post(
+                "/api/cron/webhook", headers={"Authorization": bad}
+            )
+            assert resp.status_code == 401, bad
+
+    def test_correct_token_still_accepted(self, client_with_cron_secret) -> None:
+        with patch("hevy2garmin.server._webhook_sync", new_callable=AsyncMock):
+            resp = client_with_cron_secret.post(
+                "/api/cron/webhook", headers={"Authorization": "Bearer cron-123"}
+            )
+        assert resp.status_code == 200
+
+    def test_bearer_check_is_constant_time(self) -> None:
+        """A `!=` compare on the raw string leaks the secret byte by byte."""
+        import inspect
+
+        from hevy2garmin import server
+
+        src = inspect.getsource(server._bearer_ok)
+        assert "compare_digest" in src
+
+
+class TestInFlightCap:
+    """A staged sync lives ~25 min, so unbounded spawning is a pile-up vector."""
+
+    def test_beyond_the_cap_no_new_task_is_spawned(self, client_with_cron_secret) -> None:
+        from hevy2garmin import server
+
+        filler = {object() for _ in range(server.WEBHOOK_MAX_INFLIGHT)}
+        with (
+            patch.object(server, "_webhook_tasks", filler),
+            patch("hevy2garmin.server._webhook_sync", new_callable=AsyncMock) as worker,
+        ):
+            resp = client_with_cron_secret.post(
+                "/api/cron/webhook", headers={"Authorization": "Bearer cron-123"}
+            )
+        assert resp.status_code == 200, "Hevy must not be told to retry into the same wall"
+        assert resp.json()["status"] == "throttled"
+        worker.assert_not_called()
+
+    def test_under_the_cap_still_schedules(self, client_with_cron_secret) -> None:
+        from hevy2garmin import server
+
+        with (
+            patch.object(server, "_webhook_tasks", set()),
+            patch("hevy2garmin.server._webhook_sync", new_callable=AsyncMock) as worker,
+        ):
+            resp = client_with_cron_secret.post(
+                "/api/cron/webhook", headers={"Authorization": "Bearer cron-123"}
+            )
+        assert resp.json()["status"] == "accepted"
+        worker.assert_called_once()
+
+
 class TestWebhookWorker:
     """Staged retry semantics: all but the last attempt are merge_only, so a
     workout is uploaded plainly only once the watch activity clearly is not

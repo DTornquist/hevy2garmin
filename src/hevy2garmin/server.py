@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
@@ -2549,6 +2550,16 @@ async def _do_sync_one(*, respect_grace: bool = False, merge_only: bool = False)
             return JSONResponse({"synced": 0, "skipped_error": True, "title": unsynced["title"], "remaining": max(0, remaining), "done": remaining <= 0})
 
 
+def _bearer_ok(request: Request, secret: str) -> bool:
+    """Constant-time check of `Authorization: Bearer <secret>`.
+
+    compare_digest rather than `!=` so the comparison cannot leak the shared
+    secret a byte at a time to a caller who can time the response.
+    """
+    auth = request.headers.get("authorization") or ""
+    return hmac.compare_digest(auth, f"Bearer {secret}")
+
+
 @app.get("/api/cron/sync")
 async def cron_sync(request: Request, merge_only: bool = Query(False)):
     """Vercel cron endpoint. Syncs 1 workout per invocation."""
@@ -2557,8 +2568,7 @@ async def cron_sync(request: Request, merge_only: bool = Query(False)):
     # Vercel sets CRON_SECRET to verify cron requests
     cron_secret = os.environ.get("CRON_SECRET")
     if cron_secret:
-        auth = request.headers.get("authorization")
-        if auth != f"Bearer {cron_secret}":
+        if not _bearer_ok(request, cron_secret):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     # Cron/autosync — respect grace so watch activities can land first.
@@ -2574,6 +2584,8 @@ async def cron_sync(request: Request, merge_only: bool = Query(False)):
 WEBHOOK_DELAY_SECONDS = int(os.environ.get("WEBHOOK_DELAY_SECONDS", "300"))
 WEBHOOK_RETRY_INTERVAL_SECONDS = int(os.environ.get("WEBHOOK_RETRY_INTERVAL_SECONDS", "600"))
 WEBHOOK_MAX_ATTEMPTS = int(os.environ.get("WEBHOOK_MAX_ATTEMPTS", "3"))
+# Ceiling on concurrently staged syncs; a burst past this is declined, not queued.
+WEBHOOK_MAX_INFLIGHT = int(os.environ.get("WEBHOOK_MAX_INFLIGHT", "4"))
 
 _webhook_tasks: set = set()  # strong refs — bare asyncio tasks get garbage collected
 
@@ -2660,15 +2672,40 @@ async def cron_webhook(request: Request):
 
     from fastapi.responses import JSONResponse
 
+    # Fail CLOSED. This endpoint is internet-facing by design and is exempt from
+    # the dashboard cookie/CSRF middleware, so treating "no secret set" as "no
+    # auth needed" leaves an anonymous sync trigger exposed on any instance
+    # whose owner set a dashboard password but read CRON_SECRET as a Vercel-only
+    # concern. Unconfigured means unavailable, not open.
     cron_secret = os.environ.get("CRON_SECRET")
-    if cron_secret:
-        auth = request.headers.get("authorization")
-        if auth != f"Bearer {cron_secret}":
-            logger.warning("Hevy webhook rejected: bad or missing Authorization header")
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if not cron_secret:
+        logger.warning(
+            "Hevy webhook refused: CRON_SECRET is not set, so there is no way to authenticate "
+            "Hevy. Set CRON_SECRET to enable the endpoint."
+        )
+        return JSONResponse(
+            {"error": "Webhook not configured: CRON_SECRET is unset"}, status_code=503
+        )
+    if not _bearer_ok(request, cron_secret):
+        logger.warning("Hevy webhook rejected: bad or missing Authorization header")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     if not _can_run_background_work():
         return await _webhook_sync_serverless()
+
+    # Each accepted request owns a task for up to WEBHOOK_DELAY +
+    # (MAX_ATTEMPTS - 1) * RETRY_INTERVAL seconds (~25 min by default), so
+    # unbounded spawning lets a burst pile up tasks that only queue on the sync
+    # lock and hammer Garmin. Past the cap, decline to add another: those
+    # already staged plus auto-sync cover the work, and Hevy still gets a 200 so
+    # it does not retry into the same wall.
+    if len(_webhook_tasks) >= WEBHOOK_MAX_INFLIGHT:
+        logger.warning(
+            "Hevy webhook throttled: %d staged syncs already in flight — they and "
+            "auto-sync will pick this workout up",
+            len(_webhook_tasks),
+        )
+        return JSONResponse({"status": "throttled", "in_flight": len(_webhook_tasks)})
 
     logger.info(
         "Hevy webhook received — staged sync in %ds (up to %d attempts)",
