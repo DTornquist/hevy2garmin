@@ -365,7 +365,7 @@ Put the dashboard behind nginx, Caddy or Traefik on a subdomain, terminate TLS t
 
 Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works with no extra configuration.
 
-Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) works too, as long as the proxy tells the app which sub-path it is mounted at. Send `X-Forwarded-Prefix` and strip the prefix from the forwarded path:
+Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) works too. It needs two things: the proxy tells the app which sub-path it is mounted at, and you set `H2G_TRUST_FORWARDED_PREFIX=true` so the app believes it.
 
 ```nginx
 location /hevy2garmin/ {
@@ -376,7 +376,9 @@ location /hevy2garmin/ {
 }
 ```
 
-Caddy equivalent:
+**The opt-in is not busywork.** Any client can send `X-Forwarded-Prefix`, and every URL on the page is built from it — the login form's `action`, the Garmin token POST, redirect targets. On an instance that is *not* behind a prefix-setting proxy, believing the header would let a caller re-point those at their own host. So the header is ignored unless you turn this on, and even then only a plain absolute path is accepted (no `//host`, no scheme, no quotes or angle brackets); anything else is treated as no prefix and the app serves from the root. **Your proxy must set the header itself rather than passing a client-supplied one through.**
+
+Caddy equivalent (`header_up` replaces any incoming value, which is what you want):
 
 ```caddyfile
 handle_path /hevy2garmin/* {

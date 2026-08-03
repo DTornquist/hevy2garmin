@@ -59,6 +59,43 @@ _ROOT_ABSOLUTE_ATTR = re.compile(
     r'(\s(?:href|src|action|hx-get|hx-post|hx-put|hx-patch|hx-delete)=")/(?!/)'
 )
 
+# A prefix is a single-origin absolute path and nothing else. The character class
+# excludes ":" (no scheme), quotes and angle brackets (no breaking out of an
+# attribute or a script tag), and the explicit "//" rejection blocks a
+# protocol-relative value, which would silently re-point every URL on the page at
+# another host.
+_SAFE_PREFIX = re.compile(r"^/[A-Za-z0-9._~/-]+$")
+
+
+def trust_forwarded_prefix() -> bool:
+    """Whether X-Forwarded-Prefix may be believed.
+
+    Off by default, and that default is the security boundary: any client can
+    send the header, so on a directly-exposed instance — or one behind a proxy
+    that forwards client headers untouched — trusting it hands an attacker
+    control of every URL the page emits, including the login form's action and
+    the Garmin token POST. Only the operator knows a proxy is setting it.
+    """
+    return os.environ.get("H2G_TRUST_FORWARDED_PREFIX", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _validated_prefix(raw: str) -> str:
+    """Normalize a claimed sub-path, or return "" if it is not one.
+
+    Rejecting outright rather than sanitizing: a prefix that needed cleaning was
+    not sent by the proxy this feature exists for, and serving the page at the
+    origin root is the safe fallback in every case.
+    """
+    candidate = (raw or "").strip().rstrip("/")
+    if not candidate or candidate.startswith("//") or not _SAFE_PREFIX.match(candidate):
+        return ""
+    return candidate
+
 
 def _apply_prefix(html: str, prefix: str) -> str:
     """Move root-absolute URL attributes in ``html`` onto ``prefix``.
@@ -72,18 +109,29 @@ def _apply_prefix(html: str, prefix: str) -> str:
     if not prefix:
         return html
 
+    # Escaped even though _validated_prefix already excludes every character
+    # that matters here: this is the sink, and a sink that cannot be broken
+    # regardless of what reaches it does not depend on validation staying correct.
+    safe = escape(prefix, quote=True)
+
     def _sub(m: re.Match[str]) -> str:
         rest = html[m.end() - 1 :]
-        if rest == prefix or rest.startswith((prefix + "/", prefix + '"', prefix + "?")):
+        if rest == safe or rest.startswith((safe + "/", safe + '"', safe + "?")):
             return m.group(0)
-        return f"{m.group(1)}{prefix}/"
+        return f"{m.group(1)}{safe}/"
 
     return _ROOT_ABSOLUTE_ATTR.sub(_sub, html)
 
 
 def _prefix_location(location: str, prefix: str) -> str:
-    """Move a root-relative redirect target onto ``prefix``; idempotent."""
-    if not prefix or not location.startswith("/") or location.startswith("//"):
+    """Move a root-relative redirect target onto ``prefix``; idempotent.
+
+    Both sides are checked for a protocol-relative form: a "//evil.example.com"
+    prefix would otherwise turn any internal redirect into an off-site one.
+    """
+    if not prefix or prefix.startswith("//"):
+        return location
+    if not location.startswith("/") or location.startswith("//"):
         return location
     if location == prefix or location.startswith((prefix + "/", prefix + "?")):
         return location
@@ -516,8 +564,16 @@ async def reverse_proxy_prefix(request: Request, call_next):
     callers concatenate a leading-slash path. Redirect targets are moved onto
     the prefix here, because a proxy sees only a root-relative Location it has
     no way to attribute. Empty header = empty prefix = unchanged behaviour.
+
+    The header is only read when H2G_TRUST_FORWARDED_PREFIX is set, and then only
+    if it is a plain absolute path — see trust_forwarded_prefix and
+    _validated_prefix. Anything else is treated as no prefix at all.
     """
-    prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+    prefix = (
+        _validated_prefix(request.headers.get("x-forwarded-prefix", ""))
+        if trust_forwarded_prefix()
+        else ""
+    )
     token = _url_prefix.set(prefix)
     try:
         response = await call_next(request)

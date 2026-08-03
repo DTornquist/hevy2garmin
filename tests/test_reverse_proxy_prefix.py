@@ -19,9 +19,22 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    """Client with the header explicitly trusted — the deployed-behind-a-proxy case."""
     os.environ.pop("HEVY2GARMIN_SECRET", None)
     os.environ.pop("DEMO_MODE", None)
+    monkeypatch.setenv("H2G_TRUST_FORWARDED_PREFIX", "1")
+    from hevy2garmin.server import app
+
+    yield TestClient(app, follow_redirects=False)
+
+
+@pytest.fixture
+def untrusting_client():
+    """Client with the flag absent — the default, and every non-proxied install."""
+    os.environ.pop("HEVY2GARMIN_SECRET", None)
+    os.environ.pop("DEMO_MODE", None)
+    os.environ.pop("H2G_TRUST_FORWARDED_PREFIX", None)
     from hevy2garmin.server import app
 
     yield TestClient(app, follow_redirects=False)
@@ -58,11 +71,31 @@ class TestReverseProxyPrefix:
         assert "</script><script>x" not in _app_prefix(resp.text)
 
     def test_client_side_urls_are_prefixed(self, client):
-        """Every JS-built API URL on the page resolves under the sub-path."""
+        """Every JS-built URL on the page resolves under the sub-path.
+
+        Not just fetch(): a bare `const url = '/api/…'` or a
+        `location.href = '/'` escapes the prefix just as thoroughly, and those
+        are the forms the direct-login POSTs and the post-connect redirect used.
+        """
         resp = client.get("/setup", headers={"X-Forwarded-Prefix": "/apps/hevy2garmin"})
         assert "window.APP_PREFIX + '/api/garmin-ticket'" in resp.text
-        # No JS fetch() may target a root-absolute path.
-        assert not re.search(r"fetch\((['\"])/(?!/)", resp.text)
+        for pattern in (
+            r"fetch\((['\"])/(?!/)",            # fetch('/…')
+            r"=\s*(['\"])/api/(?!/)",           # const url = '/api/…'
+            r"location\.href\s*=\s*(['\"])/",  # location.href = '/…'
+        ):
+            assert not re.search(pattern, resp.text), pattern
+
+    def test_direct_login_posts_are_prefixed(self, client):
+        """H2G_DIRECT_GARMIN_LOGIN is exactly the self-hosted sub-path case."""
+        resp = client.get("/setup", headers={"X-Forwarded-Prefix": "/apps/hevy2garmin"})
+        assert "window.APP_PREFIX + '/api/garmin-login'" in resp.text
+        assert "window.APP_PREFIX + '/api/garmin-login-mfa'" in resp.text
+
+    def test_post_connect_redirect_is_prefixed(self, client):
+        """Fires on every successful Garmin connect; bounced sub-path users home."""
+        resp = client.get("/setup", headers={"X-Forwarded-Prefix": "/apps/hevy2garmin"})
+        assert "window.location.href = (window.APP_PREFIX || '') + '/'" in resp.text
 
 
 class TestServerRenderedUrlsArePrefixed:
@@ -157,3 +190,99 @@ class TestRedirectLocationIsPrefixed:
         assert _prefix_location("//evil.example.com", "/p") == "//evil.example.com"
         assert _prefix_location("https://x.example.com/y", "/p") == "https://x.example.com/y"
         assert _prefix_location("/setup", "") == "/setup"
+
+
+class TestForwardedPrefixIsNotTrustedBlindly:
+    """X-Forwarded-Prefix is client-supplied, and every URL on the page derives
+    from it — the login form's action, the Garmin token POST, redirect targets.
+    So it is read only when the operator says a proxy sets it, and then only if
+    it is a plain absolute path. Both halves matter: the gate protects instances
+    that are not behind a rewriting proxy at all (non-standard headers pass
+    straight through hosted platforms), and the validation protects the ones that
+    are, against a proxy that forwards client headers untouched.
+    """
+
+    XSS = '"><script>alert(document.domain)</script><x y="'
+    OFFSITE = "//evil.example.com"
+
+    def test_header_is_ignored_without_the_opt_in(self, untrusting_client):
+        resp = untrusting_client.get(
+            "/setup", headers={"X-Forwarded-Prefix": "/apps/hevy2garmin"}
+        )
+        assert _app_prefix(resp.text) == '""'
+        assert 'action="/setup"' in resp.text
+
+    def test_no_html_injection_through_the_prefix(self, client):
+        resp = client.get("/setup", headers={"X-Forwarded-Prefix": self.XSS})
+        assert "<script>alert(document.domain)</script>" not in resp.text
+        assert _app_prefix(resp.text) == '""'
+
+    def test_protocol_relative_prefix_cannot_repoint_urls(self, client):
+        """//evil.example.com would send the password and Garmin tokens off-site."""
+        resp = client.get("/setup", headers={"X-Forwarded-Prefix": self.OFFSITE})
+        assert "evil.example.com" not in resp.text
+        assert _app_prefix(resp.text) == '""'
+        assert 'action="/setup"' in resp.text
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            '"><script>x</script>',
+            "//evil.example.com",
+            "///evil.example.com",
+            "https://evil.example.com",
+            "javascript:alert(1)",
+            "/a'b",
+            "/a<b>",
+            "/a b",
+            "/a\\\\b",
+            "no-leading-slash",
+            "/",
+            "",
+            "/a%2e%2e",
+            "/a?b=c",
+            "/a#b",
+        ],
+    )
+    def test_rejected_shapes_fall_back_to_the_root(self, bad):
+        from hevy2garmin.server import _validated_prefix
+
+        assert _validated_prefix(bad) == "", bad
+
+    @pytest.mark.parametrize(
+        "good,expected",
+        [
+            ("/hevy2garmin", "/hevy2garmin"),
+            ("/apps/hevy2garmin", "/apps/hevy2garmin"),
+            ("/apps/hevy2garmin/", "/apps/hevy2garmin"),
+            ("/a-b_c.d~e", "/a-b_c.d~e"),
+        ],
+    )
+    def test_accepted_shapes_survive(self, good, expected):
+        from hevy2garmin.server import _validated_prefix
+
+        assert _validated_prefix(good) == expected
+
+    def test_redirect_cannot_be_sent_off_site(self):
+        from hevy2garmin.server import _prefix_location
+
+        assert _prefix_location("/login", "//evil.example.com") == "/login"
+        assert _prefix_location("/login", "/apps/h2g") == "/apps/h2g/login"
+
+    def test_html_sink_escapes_even_if_validation_were_bypassed(self):
+        """Defense in depth: the sink must hold on its own."""
+        from hevy2garmin.server import _apply_prefix
+
+        out = _apply_prefix(' href="/workouts"', '"><script>x</script>')
+        assert "<script>" not in out
+        assert "&lt;script&gt;" in out
+
+    def test_opt_in_accepts_the_documented_flag_spellings(self, monkeypatch):
+        from hevy2garmin.server import trust_forwarded_prefix
+
+        for on in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("H2G_TRUST_FORWARDED_PREFIX", on)
+            assert trust_forwarded_prefix() is True, on
+        for off in ("", "0", "false", "no", "off", "maybe"):
+            monkeypatch.setenv("H2G_TRUST_FORWARDED_PREFIX", off)
+            assert trust_forwarded_prefix() is False, off
