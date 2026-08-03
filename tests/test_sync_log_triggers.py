@@ -69,6 +69,46 @@ class TestSyncNowIsRecorded:
         assert recorded == [({"synced": 0, "failed": 0}, "manual (one)")]
 
 
+class TestFailuresAreDistinguishableFromNoWork:
+    """A failed sync must not look like "nothing to sync" on /history.
+
+    _do_sync_one reports a non-synced outcome as {"synced": 0, <status>: 1}, so a
+    rejected upload arrives as failed=1 — not as an `error` key. Classifying on
+    error/skipped_error alone logged it 0/0, which is byte-identical to a healthy
+    idle run and is the precise ambiguity the sync log exists to remove. It also
+    disagreed with the per-row path, which records failed=1 for the same event.
+    """
+
+    def test_failed_upload_is_recorded_as_a_failure(self, client, recorded, monkeypatch):
+        _stub_sync_one(monkeypatch, {"synced": 0, "failed": 1, "title": "Push", "done": False})
+        client.post("/api/sync-one")
+        assert recorded == [({"synced": 0, "failed": 1}, "manual (one)")]
+
+    def test_failed_upload_on_the_cron_path_too(self, client, recorded, monkeypatch):
+        _stub_sync_one(monkeypatch, {"synced": 0, "failed": 1, "title": "Push", "done": False})
+        client.get("/api/cron/sync")
+        assert recorded == [({"synced": 0, "failed": 1}, "cron")]
+
+    def test_in_flight_statuses_are_not_counted_as_failures(self, client, recorded, monkeypatch):
+        """needs_review / processing / deferred are unfinished, not failed."""
+        for status in ("needs_review", "processing", "deferred", "merge_pending"):
+            recorded.clear()
+            _stub_sync_one(monkeypatch, {"synced": 0, status: 1, "done": False})
+            client.post("/api/sync-one")
+            assert recorded == [({"synced": 0, "failed": 0}, "manual (one)")], status
+
+    def test_a_raising_sync_is_recorded_before_it_propagates(self, client, recorded, monkeypatch):
+        from hevy2garmin import server
+
+        async def _boom(*, respect_grace=False, **kw):
+            raise RuntimeError("Hevy 502")
+
+        monkeypatch.setattr(server, "_do_sync_one", _boom)
+        with pytest.raises(RuntimeError):
+            client.post("/api/sync-one")
+        assert recorded == [({"failed": 1}, "manual (one)")]
+
+
 class TestCronIsRecorded:
     def test_cron_sync_records_with_its_own_trigger(self, client, recorded, monkeypatch):
         _stub_sync_one(monkeypatch, {"synced": 1, "title": "Pull"})
@@ -136,6 +176,8 @@ class TestLockIsStillHeldAndReleased:
         # A leaked semaphore would make the next sync permanently "busy".
         assert server._acquire_sync_lock() is True
         server._sync_executing.release()
+        # Recording on the exception path must not swallow the exception either.
+        assert recorded == [({"failed": 1}, "manual (one)")]
 
 
 class TestRecordingNeverBreaksASync:

@@ -2344,12 +2344,23 @@ async def _sync_one_recorded(
 
     try:
         resp = await _do_sync_one(respect_grace=respect_grace)
+    except Exception:
+        # Record before re-raising, so a crash mid-sync is not the one failure
+        # mode that leaves /history looking healthy. The per-row and auto paths
+        # both record on exception; this makes cron and Sync Now agree.
+        _record_sync_log({"failed": 1}, trigger=trigger)
+        raise
     finally:
         _sync_executing.release()
 
     try:
         data = _json.loads(bytes(resp.body))
-        failed = 1 if (data.get("error") or data.get("skipped_error")) else 0
+        # `failed` is what _do_sync_one reports for a non-synced outcome
+        # ({"synced": 0, one.status: 1}); without it a rejected upload lands as
+        # 0 synced / 0 failed, indistinguishable from "nothing to sync" — the
+        # exact ambiguity this is meant to remove. error/skipped_error are the
+        # hard-stop shapes. needs_review/processing stay 0/0: still in flight.
+        failed = 1 if (data.get("error") or data.get("skipped_error") or data.get("failed")) else 0
         _record_sync_log({"synced": data.get("synced", 0), "failed": failed}, trigger=trigger)
     except Exception:
         logger.debug("sync_log record failed", exc_info=True)
