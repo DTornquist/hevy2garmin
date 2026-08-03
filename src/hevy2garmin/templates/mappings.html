@@ -236,7 +236,7 @@ document.querySelectorAll('#mappings-table tr.mapping-row').forEach(row => {
 
 // Load categories from API and populate all category selects
 let catData = {};
-fetch('/api/garmin-categories').then(r => r.json()).then(data => {
+fetch(window.APP_PREFIX + '/api/garmin-categories').then(r => r.json()).then(data => {
     catData = data;
     const selects = document.querySelectorAll('.cat-select');
     // Sort by numeric ID

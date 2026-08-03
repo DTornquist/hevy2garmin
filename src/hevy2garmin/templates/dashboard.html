@@ -439,7 +439,7 @@ async function syncNow() {
 
     while (!_syncStopped) {
         try {
-            const resp = await fetch('/api/sync-one', { method: 'POST' });
+            const resp = await fetch(window.APP_PREFIX + '/api/sync-one', { method: 'POST' });
             const data = await resp.json();
 
             if (data.busy) {
