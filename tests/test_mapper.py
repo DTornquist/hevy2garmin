@@ -318,3 +318,83 @@ class TestGeneratedTemplateMapIsCurrent:
             "above. Re-run scripts/gen_template_map.py, or update both files in "
             "the same commit."
         )
+
+
+class TestNormalizedTitleFallback:
+    """A title that differs from the table key only in formatting still maps.
+
+    Hevy titles drift in punctuation and spacing (an en-dash where the table
+    has a hyphen, a doubled space, different brackets). Comparing alphanumeric
+    skeletons recovers those without ever guessing: only an exact match after
+    normalization counts, so two different exercises cannot collapse together
+    and a letter-level typo stays UNKNOWN rather than mapping to the wrong
+    Garmin exercise.
+    """
+
+    def test_en_dash_instead_of_hyphen(self) -> None:
+        key = next(k for k in HEVY_TO_GARMIN if " - " in k)
+        cat, sub, name = lookup_exercise(key.replace(" - ", " – "))
+        assert (cat, sub) == HEVY_TO_GARMIN[key]
+        assert name == key.replace(" - ", " – "), "the caller's title is echoed back"
+
+    def test_case_and_spacing_drift(self) -> None:
+        cat, sub, _ = lookup_exercise("bench  press   (BARBELL)")
+        assert (cat, sub) == HEVY_TO_GARMIN["Bench Press (Barbell)"]
+
+    def test_punctuation_dropped_entirely(self) -> None:
+        cat, sub, _ = lookup_exercise("Bench Press Barbell")
+        assert (cat, sub) == HEVY_TO_GARMIN["Bench Press (Barbell)"]
+
+    def test_letter_typo_stays_unknown(self) -> None:
+        """Not fuzzy: a misspelling must not resolve to a near neighbour."""
+        cat, _, _ = lookup_exercise("Bnch Press (Barbell)")
+        assert cat == _UNKNOWN_CATEGORY
+
+    def test_unrelated_name_stays_unknown(self) -> None:
+        cat, _, _ = lookup_exercise("Totally Made Up Exercise")
+        assert cat == _UNKNOWN_CATEGORY
+
+    def test_exact_match_is_not_affected(self) -> None:
+        """The normalized index is a fallback — exact keys resolve before it."""
+        for key in list(HEVY_TO_GARMIN)[:50]:
+            cat, sub, _ = lookup_exercise(key)
+            assert (cat, sub) == HEVY_TO_GARMIN[key], key
+
+    def test_template_id_wins_over_the_normalized_fallback(self) -> None:
+        """Order matters: an exact id is more precise than a normalized name."""
+        from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
+
+        tid = next(iter(TEMPLATE_TO_GARMIN))
+        cat, sub, _ = lookup_exercise("bench  press (barbell)!!", template_id=tid)
+        assert (cat, sub) == TEMPLATE_TO_GARMIN[tid]
+
+    def test_custom_mapping_resolves_through_normalization(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _custom_mappings.clear()
+        _ensure_custom_loaded()
+        save_custom_mapping("My Weird Lift (Sandbag)", 3, 4)
+        try:
+            cat, sub, _ = lookup_exercise("my weird lift  sandbag")
+            assert (cat, sub) == (3, 4)
+        finally:
+            _custom_mappings.clear()
+
+    def test_normalized_index_prefers_the_first_table_entry(self) -> None:
+        """Two keys with the same skeleton must resolve deterministically."""
+        from hevy2garmin import mapper
+
+        mapper._normalized_index = None
+        try:
+            with patch.dict(
+                mapper.HEVY_TO_GARMIN,
+                {"Zzz Test (Thing)": (1, 2), "Zzz  Test Thing": (5, 6)},
+            ):
+                cat, sub, _ = lookup_exercise("zzztestthing")
+                assert (cat, sub) == (1, 2)
+        finally:
+            mapper._normalized_index = None
+
+    def test_empty_and_whitespace_titles_stay_unknown(self) -> None:
+        for title in ("", "   ", "!!!"):
+            cat, _, _ = lookup_exercise(title)
+            assert cat == _UNKNOWN_CATEGORY, title

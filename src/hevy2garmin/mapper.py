@@ -18,6 +18,8 @@ FIT SDK exercise categories used:
 
 from __future__ import annotations
 
+import re
+
 from hevy2garmin.template_map import TEMPLATE_TO_GARMIN
 
 # --------------------------------------------------------------------------- #
@@ -728,6 +730,33 @@ def save_custom_mapping(hevy_name: str, category: int, subcategory: int) -> None
     _custom_mappings[hevy_name] = (category, subcategory)
 
 
+def _normalize_name(name: str) -> str:
+    """Collapse a Hevy title to its alphanumeric skeleton (lowercased).
+
+    Strips case, whitespace and punctuation so minor title formatting drift
+    (``Bench Press - Close Grip`` vs ``Bench Press – Close Grip``, stray
+    spaces, differing brackets) still resolves. This is NOT fuzzy matching:
+    only exact alphanumeric matches collapse together, so two genuinely
+    different exercises never collide. Letter-level typos ("Palloff" vs
+    "Pallof") stay misses by design — a wrong mapping is worse than UNKNOWN.
+    """
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+# Lazily-built normalized index of the built-in table (static at runtime).
+_normalized_index: dict[str, tuple[int, int]] | None = None
+
+
+def _get_normalized_index() -> dict[str, tuple[int, int]]:
+    global _normalized_index
+    if _normalized_index is None:
+        index: dict[str, tuple[int, int]] = {}
+        for name, pair in HEVY_TO_GARMIN.items():
+            index.setdefault(_normalize_name(name), pair)
+        _normalized_index = index
+    return _normalized_index
+
+
 def lookup_exercise(hevy_name: str, template_id: str | None = None) -> tuple[int, int, str]:
     """Return ``(category, subcategory, display_name)`` for a Hevy exercise.
 
@@ -736,6 +765,8 @@ def lookup_exercise(hevy_name: str, template_id: str | None = None) -> tuple[int
       2. The built-in English-name table.
       3. Hevy ``exercise_template_id``, which is the same regardless of the
          user's Hevy language, so non-English exercises still map (#173).
+      4. Normalized fallback (case/space/punctuation-insensitive) against the
+         custom mappings and then the table.
 
     The table is consulted before the template id even though the template id
     is the more precise key. ``TEMPLATE_TO_GARMIN`` is generated *from* this
@@ -761,6 +792,15 @@ def lookup_exercise(hevy_name: str, template_id: str | None = None) -> tuple[int
     #    table does not carry.
     if template_id:
         pair = TEMPLATE_TO_GARMIN.get(template_id)
+        if pair is not None:
+            return (pair[0], pair[1], hevy_name)
+    # 4. Normalized fallback — tolerates formatting drift, never fuzzy.
+    norm = _normalize_name(hevy_name)
+    if norm:
+        for name, custom_pair in _custom_mappings.items():
+            if _normalize_name(name) == norm:
+                return (custom_pair[0], custom_pair[1], hevy_name)
+        pair = _get_normalized_index().get(norm)
         if pair is not None:
             return (pair[0], pair[1], hevy_name)
     return (_UNKNOWN_CATEGORY, _UNKNOWN_SUBCATEGORY, hevy_name)

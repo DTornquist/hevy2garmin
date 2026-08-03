@@ -394,6 +394,19 @@ The app then emits every link, asset, form action, htmx call, redirect and JavaS
 
 Auto-sync runs on a timer inside the process, so a self-hosted instance can poll as often as you like — enable it and set the interval on the dashboard. This is the main practical difference from the Vercel deploy, where scheduling comes from a platform cron that is limited to once per day on Vercel's Hobby plan.
 
+### Removing duplicates from intervals.icu
+
+The `replace` watch strategy deletes the watch recording from Garmin once the named activity is uploaded, so Garmin ends up with one activity. Garmin deletions do not propagate, though: if you also sync Garmin to [intervals.icu](https://intervals.icu), the copy it already pulled stays there, and every merged workout leaves a duplicate behind.
+
+Set both of these and hevy2garmin deletes it there as well, matched on the Garmin activity id:
+
+```
+INTERVALS_API_KEY=
+INTERVALS_ATHLETE_ID=
+```
+
+Entirely opt-in — with either one missing the step is skipped. It also never fails a sync: intervals.icu being down or slow is logged and ignored, because the Garmin upload has already succeeded by that point.
+
 ### Running as a non-root user
 
 The image runs as uid 999. Named volumes (what the compose file uses) are handled automatically. If you use **bind mounts** instead — the `-v ~/.hevy2garmin:/root/.hevy2garmin` form shown in the Docker section — grant that user access once:
