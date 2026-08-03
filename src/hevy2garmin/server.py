@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import hmac
 import logging
 import os
 import re
@@ -14,7 +15,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
@@ -530,16 +531,23 @@ async def check_setup(request: Request, call_next):
             return RedirectResponse(f"/login?next={path}")
 
     # Auth check for POST /api/* endpoints (CSRF protection).
-    # Cron has its own Bearer token check. All others require the cookie or X-Api-Key.
-    if secret and request.method == "POST" and path.startswith("/api/") and path != "/api/cron/sync":
+    # Cron and the Hevy webhook have their own Bearer token check. All others
+    # require the cookie or X-Api-Key.
+    if (
+        secret
+        and request.method == "POST"
+        and path.startswith("/api/")
+        and path not in ("/api/cron/sync", "/api/cron/webhook")
+    ):
         token = request.cookies.get("h2g_auth") or request.headers.get("x-api-key")
         if token != secret:
             from starlette.responses import Response
             return Response("Unauthorized", status_code=401)
 
     # Setup page and sync endpoints: skip the "is configured?" redirect
-    if path in ("/login", "/setup", "/api/sync-one", "/api/cron/sync", "/api/setup-actions",
-                "/api/garmin-ticket", "/api/garmin-login", "/api/garmin-login-mfa"):
+    if path in ("/login", "/setup", "/api/sync-one", "/api/cron/sync", "/api/cron/webhook",
+                "/api/setup-actions", "/api/garmin-ticket", "/api/garmin-login",
+                "/api/garmin-login-mfa"):
         response = await call_next(request)
     else:
         # Redirect to setup if not configured
@@ -2452,15 +2460,18 @@ async def api_setup_actions(request: Request):
 
 
 @app.post("/api/sync-one")
-async def api_sync_one(request: Request):
+async def api_sync_one(request: Request, merge_only: bool = Query(False)):
     """Sync exactly 1 unsynced workout. Returns JSON with status."""
     # Manual Sync Now — bypass grace so the user gets an immediate upload.
-    return await _sync_one_recorded(respect_grace=False, trigger="manual (one)")
+    return await _sync_one_recorded(
+        respect_grace=False, merge_only=merge_only, trigger="manual (one)"
+    )
 
 
 async def _sync_one_recorded(
     *,
     respect_grace: bool = False,
+    merge_only: bool = False,
     trigger: str = "manual (one)",
 ):
     """Take the sync lock, sync one workout, and record it in the sync log.
@@ -2480,7 +2491,7 @@ async def _sync_one_recorded(
         return JSONResponse({"error": "Sync already running", "busy": True})
 
     try:
-        resp = await _do_sync_one(respect_grace=respect_grace)
+        resp = await _do_sync_one(respect_grace=respect_grace, merge_only=merge_only)
     except Exception:
         # Record before re-raising, so a crash mid-sync is not the one failure
         # mode that leaves /history looking healthy. The per-row and auto paths
@@ -2541,7 +2552,7 @@ def _scan_for_unsynced(hevy, is_synced, total_count, failed_ids, on_page=None):
     return unsynced, unmapped
 
 
-async def _do_sync_one(*, respect_grace: bool = False):
+async def _do_sync_one(*, respect_grace: bool = False, merge_only: bool = False):
     """Inner sync logic, called with _sync_executing lock held.
 
     ``respect_grace`` is True for Vercel cron (wait for watch data) and False
@@ -2632,6 +2643,7 @@ async def _do_sync_one(*, respect_grace: bool = False):
                 cfg=config,
                 garmin_client=garmin_client,
                 respect_grace=False,  # already checked above
+                merge_only=merge_only,
                 database=db.get_db(),
             )
 
@@ -2686,20 +2698,172 @@ async def _do_sync_one(*, respect_grace: bool = False):
             return JSONResponse({"synced": 0, "skipped_error": True, "title": unsynced["title"], "remaining": max(0, remaining), "done": remaining <= 0})
 
 
+def _bearer_ok(request: Request, secret: str) -> bool:
+    """Constant-time check of `Authorization: Bearer <secret>`.
+
+    compare_digest rather than `!=` so the comparison cannot leak the shared
+    secret a byte at a time to a caller who can time the response.
+    """
+    auth = request.headers.get("authorization") or ""
+    return hmac.compare_digest(auth, f"Bearer {secret}")
+
+
 @app.get("/api/cron/sync")
-async def cron_sync(request: Request):
+async def cron_sync(request: Request, merge_only: bool = Query(False)):
     """Vercel cron endpoint. Syncs 1 workout per invocation."""
     from fastapi.responses import JSONResponse
 
     # Vercel sets CRON_SECRET to verify cron requests
     cron_secret = os.environ.get("CRON_SECRET")
     if cron_secret:
-        auth = request.headers.get("authorization")
-        if auth != f"Bearer {cron_secret}":
+        if not _bearer_ok(request, cron_secret):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     # Cron/autosync — respect grace so watch activities can land first.
-    return await _sync_one_recorded(respect_grace=True, trigger="cron")
+    return await _sync_one_recorded(respect_grace=True, merge_only=merge_only, trigger="cron")
+
+
+# ── Hevy webhook receiver ────────────────────────────────────────────────────
+# Hevy fires this when a workout is saved. The paired watch activity usually
+# reaches Garmin Connect a few minutes later, so the sync is staged: wait,
+# then try merge-only, and only the final attempt falls back to a plain FIT
+# upload — so a workout is never left unsynced. Retry state is in-memory
+# only; a restart drops it and auto-sync is the safety net.
+WEBHOOK_DELAY_SECONDS = int(os.environ.get("WEBHOOK_DELAY_SECONDS", "300"))
+WEBHOOK_RETRY_INTERVAL_SECONDS = int(os.environ.get("WEBHOOK_RETRY_INTERVAL_SECONDS", "600"))
+WEBHOOK_MAX_ATTEMPTS = int(os.environ.get("WEBHOOK_MAX_ATTEMPTS", "3"))
+# Ceiling on concurrently staged syncs; a burst past this is declined, not queued.
+WEBHOOK_MAX_INFLIGHT = int(os.environ.get("WEBHOOK_MAX_INFLIGHT", "4"))
+
+_webhook_tasks: set = set()  # strong refs — bare asyncio tasks get garbage collected
+
+
+def _can_run_background_work() -> bool:
+    """Whether work scheduled now will still run after the response is sent.
+
+    False on serverless, where the function is frozen or torn down as soon as
+    it responds: an asyncio task created here would simply never be resumed.
+    Python on Vercel has no `waitUntil` equivalent to hand the work to.
+    """
+    return not os.environ.get("VERCEL")
+
+
+async def _webhook_sync() -> None:
+    """Background worker behind /api/cron/webhook."""
+    import asyncio
+    import json
+
+    await asyncio.sleep(WEBHOOK_DELAY_SECONDS)
+    for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
+        is_last = attempt == WEBHOOK_MAX_ATTEMPTS
+        try:
+            resp = await _sync_one_recorded(merge_only=not is_last, trigger="webhook")
+            data = json.loads(bytes(resp.body))
+        except Exception as e:
+            logger.error("Webhook sync attempt %d/%d failed: %s",
+                         attempt, WEBHOOK_MAX_ATTEMPTS, str(e)[:300])
+            return
+        # A lock collision with auto-sync is not an answer — retry, don't give up.
+        retry = bool(data.get("busy")) or bool(data.get("merge_pending"))
+        if not retry:
+            logger.info(
+                "Webhook sync attempt %d/%d: %s",
+                attempt,
+                WEBHOOK_MAX_ATTEMPTS,
+                f"synced '{data.get('title', '?')}'" if data.get("synced") else "nothing pending",
+            )
+            return
+        if not is_last:
+            await asyncio.sleep(WEBHOOK_RETRY_INTERVAL_SECONDS)
+    logger.warning(
+        "Webhook sync: workout still pending after %d attempts — auto-sync will retry",
+        WEBHOOK_MAX_ATTEMPTS,
+    )
+
+
+async def _webhook_sync_serverless():
+    """Handle the webhook without background work, for serverless deployments.
+
+    There is no "later" here: the process stops at the response, so the staged
+    retry cannot run. What is safe to do instead depends on the watch merge:
+
+    - Merge on (the default): the watch activity has almost certainly not
+      reached Garmin Connect yet. Uploading now produces exactly the duplicate
+      the merge exists to prevent, and there is no second attempt to wait for,
+      so hand the workout to the platform cron and only say so.
+    - Merge off: nothing is being waited for, so sync immediately — which is
+      the whole point of a webhook, and a large win over a daily cron.
+    """
+    from fastapi.responses import JSONResponse
+
+    if load_config().get("merge_mode", True):
+        logger.info(
+            "Hevy webhook received on a serverless deployment with the watch merge on — "
+            "leaving it to the scheduled sync so the watch activity can land first"
+        )
+        return JSONResponse({"status": "deferred", "reason": "no background work; cron will sync"})
+
+    logger.info("Hevy webhook received — syncing now (watch merge off, nothing to wait for)")
+    return await _sync_one_recorded(respect_grace=False, trigger="webhook")
+
+
+@app.post("/api/cron/webhook")
+async def cron_webhook(request: Request):
+    """Hevy webhook endpoint, fired when a workout is saved.
+
+    Hevy expects a 200 within a few seconds, so on a long-running deployment
+    this only checks the Bearer token and schedules the staged sync in the
+    background. Serverless has no background to schedule into — see
+    _webhook_sync_serverless.
+    """
+    import asyncio
+
+    from fastapi.responses import JSONResponse
+
+    # Fail CLOSED. This endpoint is internet-facing by design and is exempt from
+    # the dashboard cookie/CSRF middleware, so treating "no secret set" as "no
+    # auth needed" leaves an anonymous sync trigger exposed on any instance
+    # whose owner set a dashboard password but read CRON_SECRET as a Vercel-only
+    # concern. Unconfigured means unavailable, not open.
+    cron_secret = os.environ.get("CRON_SECRET")
+    if not cron_secret:
+        logger.warning(
+            "Hevy webhook refused: CRON_SECRET is not set, so there is no way to authenticate "
+            "Hevy. Set CRON_SECRET to enable the endpoint."
+        )
+        return JSONResponse(
+            {"error": "Webhook not configured: CRON_SECRET is unset"}, status_code=503
+        )
+    if not _bearer_ok(request, cron_secret):
+        logger.warning("Hevy webhook rejected: bad or missing Authorization header")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    if not _can_run_background_work():
+        return await _webhook_sync_serverless()
+
+    # Each accepted request owns a task for up to WEBHOOK_DELAY +
+    # (MAX_ATTEMPTS - 1) * RETRY_INTERVAL seconds (~25 min by default), so
+    # unbounded spawning lets a burst pile up tasks that only queue on the sync
+    # lock and hammer Garmin. Past the cap, decline to add another: those
+    # already staged plus auto-sync cover the work, and Hevy still gets a 200 so
+    # it does not retry into the same wall.
+    if len(_webhook_tasks) >= WEBHOOK_MAX_INFLIGHT:
+        logger.warning(
+            "Hevy webhook throttled: %d staged syncs already in flight — they and "
+            "auto-sync will pick this workout up",
+            len(_webhook_tasks),
+        )
+        return JSONResponse({"status": "throttled", "in_flight": len(_webhook_tasks)})
+
+    logger.info(
+        "Hevy webhook received — staged sync in %ds (up to %d attempts)",
+        WEBHOOK_DELAY_SECONDS,
+        WEBHOOK_MAX_ATTEMPTS,
+    )
+    task = asyncio.create_task(_webhook_sync())
+    _webhook_tasks.add(task)
+    task.add_done_callback(_webhook_tasks.discard)
+    return JSONResponse({"status": "accepted"})
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
