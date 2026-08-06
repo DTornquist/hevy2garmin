@@ -568,8 +568,14 @@ def generate_description(workout: dict, calories: int | None = None, avg_hr: int
                         parts.append(f"{int(total_dur // 60)}min")
                     lines.append(f"• {name}: {' · '.join(parts)}")
                 else:
-                    weights = [s.get("weight_kg") or s.get("weight", 0) for s in normal]
-                    reps = [s.get("reps", 0) for s in normal]
+                    weights = [
+                        w for s in normal
+                        if (w := (s.get("weight_kg") or s.get("weight"))) is not None
+                    ]
+                    reps = [
+                        r for s in normal
+                        if (r := s.get("reps")) is not None
+                    ]
                     top_weight = max(weights) if weights else 0
                     top_reps = max(reps) if reps else 0
                     lines.append(f"• {name}: {len(normal)} {n_label} · {top_weight:.1f}kg × {top_reps}")
