@@ -63,7 +63,7 @@ Deploy from your phone or computer in about 5 minutes. No terminal or coding nee
 
 **Step 1: Get your Hevy API key**
 
-Open [hevy.com/settings](https://hevy.com/settings), scroll to **Integrations & API**, click **Generate API Key**, and copy it. If you don't see this section, you need to upgrade to Hevy Pro.
+Open [hevy.com/settings](https://hevy.com/settings), scroll to **Developer** (Hevy recently renamed this section from **Integrations & API**), click **Generate API Key**, and copy it. If you don't see this section, you need to upgrade to Hevy Pro.
 
 **Step 2: Create a free GitHub account** (skip if you already have one)
 
@@ -84,7 +84,7 @@ This token lets hevy2garmin set up automatic syncing on your behalf. Open [this 
 **Step 5: Deploy to Vercel**
 
 1. Go to [vercel.com/new](https://vercel.com/new) and sign in with GitHub
-2. Find **hevy2garmin** in your repo list and click **Import**
+2. Find **hevy2garmin** in your repo list and click **Import**. If your fork isn't listed even though GitHub shows it, click **Adjust GitHub App Permissions** (or **Configure GitHub App**) and grant Vercel access to the repo, then it will appear.
 3. **Add a database (required).** If you see an **Integrations** or **Storage** section during import, add **Neon Postgres** (it's free). This is where your sync history lives. If you don't see it during import, that's fine: deploy first, then open your project's **Storage** tab, add **Neon Postgres**, and redeploy. A serverless host has a read-only filesystem, so with no database the app can't save anything and shows an "internal server error".
 4. **Environment Variables.** Vercel does not pre-fill these. The form shows an empty field with a placeholder like `EXAMPLE_NAME`. Add each of the four below as its own variable: type the name in **Key**, the value in **Value**, then click **Add More** for the next one.
 
@@ -301,11 +301,11 @@ It lives alongside the Python package in the [`typescript/`](typescript) folder 
 
 > **Hevy Pro is required.** API access is not available on the free plan.
 
-1. Go to [Hevy Settings](https://hevyapp.com/settings) > Integrations & API
+1. Go to [Hevy Settings](https://hevyapp.com/settings) > Developer (formerly Integrations & API)
 2. Click **Generate API Key** and copy it
 3. Paste it into `hevy2garmin init`, the web dashboard setup, or set as `HEVY_API_KEY` env var
 
-If you don't see the Integrations & API section, you need to upgrade to [Hevy Pro](https://hevyapp.com).
+If you don't see the Developer section, you need to upgrade to [Hevy Pro](https://hevyapp.com).
 
 ## Credentials
 
