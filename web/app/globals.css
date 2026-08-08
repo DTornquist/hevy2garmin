@@ -1,0 +1,8 @@
+@import "tailwindcss";
+/* The canonical ecosystem design system, shared with soma + the standalone UIs.
+   Direct relative paths — Tailwind v4's CSS @import doesn't resolve the package's
+   exports subpath. base.css = tokens + element foundation; components.css =
+   typography scale + glass surfaces + border-glow. */
+@import "../node_modules/soma-style/css/base.css";
+@import "../node_modules/soma-style/css/components.css";
+@source "../node_modules/soma-style/dist";
