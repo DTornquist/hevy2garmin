@@ -84,11 +84,13 @@ async function loadDashboard(): Promise<DashboardData> {
 
   return {
     dbConfigured: true,
+    // A saved credential row is "connected" unless explicitly disconnected.
+    // The DB uses status='active' for a live connection (not 'connected').
     hevyConnected:
-      connected.some((r) => r.platform === "hevy" && r.status === "connected") ||
+      connected.some((r) => r.platform === "hevy" && r.status !== "disconnected") ||
       recent.length > 0,
     garminConnected:
-      connected.some((r) => r.platform === "garmin" && r.status === "connected") ||
+      connected.some((r) => r.platform === "garmin" && r.status !== "disconnected") ||
       recent.some((r) => r.garmin_activity_id != null),
     totalSynced: counts[0]?.total ?? 0,
     syncedThisWeek: counts[0]?.week ?? 0,
