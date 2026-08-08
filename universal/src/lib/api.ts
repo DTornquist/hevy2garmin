@@ -30,19 +30,79 @@ export interface HevyStatus {
   recent: HevyWorkout[];
 }
 
-export function useHevyStatus() {
-  const [data, setData] = useState<HevyStatus | null>(null);
+/**
+ * Small GET-JSON hook shared by every screen. Fetches `path` off API_BASE with
+ * the auth header, exposes { data, error, refetch }, and cancels in-flight state
+ * updates on unmount so a late response can't set state on a dead screen.
+ */
+function useApiGet<T>(path: string) {
+  const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
-    fetch(`${API_BASE}/api/hevy/status`, { headers: AUTH_HEADERS })
+    fetch(`${API_BASE}${path}`, { headers: AUTH_HEADERS })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d: HevyStatus) => alive && (setData(d), setError(null)))
+      .then((d: T) => alive && (setData(d), setError(null)))
       .catch((e) => alive && setError(String(e.message ?? e)));
     return () => { alive = false; };
-  }, [reload]);
+  }, [path, reload]);
   return { data, error, refetch: () => setReload((n) => n + 1) };
+}
+
+export function useHevyStatus() {
+  return useApiGet<HevyStatus>("/api/hevy/status");
+}
+
+/** One custom exercise mapping (overrides the built-in map for that name). */
+export interface CustomMapping {
+  hevy_name: string;
+  category: number;
+  subcategory: number;
+}
+
+/** A sampled entry from the built-in HEVY_TO_GARMIN map. */
+export interface BuiltinMappingSample {
+  name: string;
+  category: number;
+  categoryName: string;
+}
+
+export interface MappingsData {
+  dbConfigured: boolean;
+  customCount: number;
+  builtinCount: number;
+  custom: CustomMapping[];
+  sample: BuiltinMappingSample[];
+}
+
+/** Exercise-mapping summary — custom overrides + built-in map, from /api/mappings. */
+export function useMappings() {
+  return useApiGet<MappingsData>("/api/mappings");
+}
+
+/** One synced (terminal) or in-flight (pending) workout row. */
+export interface WorkoutItem {
+  hevy_id: string;
+  title: string;
+  synced_at: string | null;
+  calories: number | null;
+  avg_hr: number | null;
+  garmin_activity_id: string | null;
+  /** Terminal status (success/manual/skipped) or a pending phase. */
+  status: string;
+  kind: "terminal" | "pending";
+  detail: string | null;
+}
+
+export interface WorkoutsData {
+  dbConfigured: boolean;
+  workouts: WorkoutItem[];
+}
+
+/** Synced + pending workouts, newest-first, from /api/workouts. */
+export function useWorkouts() {
+  return useApiGet<WorkoutsData>("/api/workouts");
 }
 
 /**
