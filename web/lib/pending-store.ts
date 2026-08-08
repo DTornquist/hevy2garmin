@@ -278,6 +278,66 @@ export async function resolveTerminal(
   await sql`DELETE FROM pending_uploads WHERE hevy_id = ${hevyId}`;
 }
 
+/** Fields written when recording a successful upload. Mirrors mark_synced(). */
+export interface MarkSyncedOpts {
+  garminActivityId?: string | null;
+  title?: string | null;
+  calories?: number | null;
+  avgHr?: number | null;
+  hevyUpdatedAt?: string | null;
+  syncMethod?: string;
+}
+
+/**
+ * Record a workout as terminally synced (status='success') in synced_workouts.
+ * Mirrors db_postgres.mark_synced(): UPSERT on hevy_id, always setting
+ * status='success' and synced_at=NOW().
+ *
+ * This is a LOCAL ledger write only — it does NOT upload to Garmin. The caller
+ * (sync-one) invokes it AFTER a real Garmin upload has already landed, to record
+ * the terminal state so the workout is never re-uploaded (dedup layer 1).
+ */
+export async function markSynced(
+  hevyId: string,
+  opts: MarkSyncedOpts = {},
+  sql: Sql = getDb(),
+): Promise<void> {
+  const garminId = opts.garminActivityId ?? null;
+  const title = opts.title ?? "";
+  const calories = opts.calories ?? null;
+  const avgHr = opts.avgHr ?? null;
+  const hevyUpdatedAt = opts.hevyUpdatedAt ?? null;
+  const syncMethod = opts.syncMethod ?? "upload";
+  await sql`
+    INSERT INTO synced_workouts
+      (hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, sync_method, status)
+    VALUES (${hevyId}, ${garminId}, ${title}, ${calories}, ${avgHr}, ${hevyUpdatedAt}, ${syncMethod}, 'success')
+    ON CONFLICT (hevy_id) DO UPDATE SET
+      garmin_activity_id = EXCLUDED.garmin_activity_id,
+      title = EXCLUDED.title,
+      calories = EXCLUDED.calories,
+      avg_hr = EXCLUDED.avg_hr,
+      hevy_updated_at = EXCLUDED.hevy_updated_at,
+      sync_method = EXCLUDED.sync_method,
+      status = 'success',
+      synced_at = NOW()
+  `;
+}
+
+/**
+ * Complete a claimed upload: write the terminal success row AND clear the
+ * in-flight pending row, atomically w.r.t. the two statements. Mirrors
+ * db_postgres.complete_pending(). LOCAL ledger only — no Garmin write.
+ */
+export async function completePending(
+  hevyId: string,
+  opts: MarkSyncedOpts = {},
+  sql: Sql = getDb(),
+): Promise<void> {
+  await markSynced(hevyId, opts, sql);
+  await sql`DELETE FROM pending_uploads WHERE hevy_id = ${hevyId}`;
+}
+
 /**
  * Delete a workout's terminal row so it becomes eligible for sync again.
  * Mirrors unsync(). DB-ONLY: this does NOT delete the Garmin activity — that
