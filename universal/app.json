@@ -8,9 +8,11 @@
     "scheme": "universal",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "dev.gkos.hevy2garmin",
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "dev.gkos.hevy2garmin",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
