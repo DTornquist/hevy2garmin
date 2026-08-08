@@ -132,3 +132,45 @@ class TestDescriptionGeneration:
         desc = generate_description(workout)
         assert "80.0kg" in desc
         assert "3.0km" in desc
+
+    def test_null_reps_and_weight_do_not_crash(self) -> None:
+        # Hevy sends reps/weight present but set to None for bodyweight and
+        # isometric sets. These must not crash generate_description. Regression
+        # for #309 (max() over [None, None] raised TypeError).
+        workout = {
+            "title": "Bodyweight Day",
+            "start_time": "2026-04-01T20:00:00+00:00",
+            "end_time": "2026-04-01T20:30:00+00:00",
+            "exercises": [
+                {
+                    "title": "Pull Up",
+                    "sets": [
+                        {"type": "normal", "weight_kg": None, "reps": None},
+                        {"type": "normal", "weight_kg": None, "reps": None},
+                    ],
+                }
+            ],
+        }
+        desc = generate_description(workout)
+        assert "Pull Up" in desc
+        assert "0.0kg × 0" in desc
+
+    def test_mixed_null_and_weighted_sets_use_weighted_top(self) -> None:
+        # A null set alongside real weighted sets must be ignored, not crash,
+        # and the top figures must come from the weighted set. Regression for #309.
+        workout = {
+            "title": "Mixed Nulls",
+            "start_time": "2026-04-01T20:00:00+00:00",
+            "end_time": "2026-04-01T20:30:00+00:00",
+            "exercises": [
+                {
+                    "title": "Row",
+                    "sets": [
+                        {"type": "normal", "weight_kg": 60, "reps": 10},
+                        {"type": "normal", "weight_kg": None, "reps": None},
+                    ],
+                }
+            ],
+        }
+        desc = generate_description(workout)
+        assert "60.0kg × 10" in desc
